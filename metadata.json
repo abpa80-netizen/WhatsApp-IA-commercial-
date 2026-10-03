@@ -1,0 +1,6 @@
+{
+  "name": "WhatsApp Commercial AI",
+  "description": "Plateforme SaaS Mobile-First pour commerçants WhatsApp : catalogue produits, boutique mobile, messages commerciaux IA et CRM prospects.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

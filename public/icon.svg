@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#1E293B"/>
+    </linearGradient>
+    <linearGradient id="wa" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#25D366"/>
+      <stop offset="100%" stop-color="#1EBE5D"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#25D366" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- Background rounded squircle -->
+  <rect width="512" height="512" rx="128" fill="url(#bg)"/>
+
+  <!-- Glow circle -->
+  <circle cx="256" cy="256" r="170" fill="url(#wa)" filter="url(#shadow)"/>
+
+  <!-- Inner Dark WhatsApp Speech Bubble -->
+  <path d="M 256 130 C 184.2 130 126 188.2 126 260 C 126 283.4 132.3 305.4 143.2 324.4 L 132 376 L 185.6 364.8 C 206.4 377.2 230.4 384 256 384 C 327.8 384 386 325.8 386 260 C 386 188.2 327.8 130 256 130 Z" fill="#0F172A"/>
+
+  <!-- AI Sparkle + Phone Icon inside bubble -->
+  <!-- WhatsApp Phone Receiver in Green -->
+  <path d="M 218 200 C 213 188 206 188 200 188 C 195 188 189 188 184 194 C 178 200 164 214 164 242 C 164 270 184 297 187 301 C 190 305 226 360 282 384 C 328 404 338 396 348 395 C 358 394 380 382 385 368 C 390 354 390 342 388 340 C 386 338 380 335 372 331 C 364 327 325 307 317 305 C 309 303 304 302 298 310 C 292 318 276 338 271 343 C 266 348 261 349 253 345 C 245 341 219 332 189 305 C 165 284 149 258 144 250 C 139 242 143 238 147 234 C 151 230 156 224 160 219 C 164 214 166 210 169 205 C 172 200 170 196 168 192 C 166 188 153 156 147 142 Z" transform="translate(48, 20) scale(0.65)" fill="#25D366"/>
+
+  <!-- AI Stars / Sparkle in Top Right -->
+  <path d="M 320 180 Q 320 205 345 205 Q 320 205 320 230 Q 320 205 295 205 Q 320 205 320 180 Z" fill="#FFFFFF"/>
+  <path d="M 355 165 Q 355 178 368 178 Q 355 178 355 191 Q 355 178 342 178 Q 355 178 355 165 Z" fill="#25D366"/>
+</svg>
