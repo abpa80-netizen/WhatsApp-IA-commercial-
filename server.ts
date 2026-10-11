@@ -6,6 +6,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import fs from 'fs';
+import { handleCloudinarySign, verifyFirebaseIdToken, generateCloudinarySignature } from './src/server/cloudinarySign.ts';
+
+export { verifyFirebaseIdToken, generateCloudinarySignature, handleCloudinarySign };
 
 dotenv.config();
 
@@ -304,150 +307,11 @@ app.post('/api/ai/image/enhance', async (req: Request, res: Response) => {
 });
 
 // -------------------------------------------------------------------------
-// 3. FIREBASE AUTH VERIFICATION & CLOUDINARY SECURE SIGNATURE ENDPOINT
+// 3. CLOUDINARY SECURE SIGNATURE ENDPOINT (FIREBASE AUTH VERIFICATION)
 // -------------------------------------------------------------------------
-
-/**
- * Vérifie de façon cryptographique et sécurisée le jeton Firebase ID côté serveur
- * via l'API officielle Google Identity Toolkit.
- * @returns uid de l'utilisateur authentifié (qui ne peut pas être falsifié par le client)
- */
-export async function verifyFirebaseIdToken(token: string): Promise<string> {
-  const configPath = path.resolve(__dirname, 'firebase-applet-config.json');
-  let firebaseApiKey = '';
-  if (fs.existsSync(configPath)) {
-    try {
-      const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      firebaseApiKey = cfg.apiKey || '';
-    } catch {
-      // ignore
-    }
-  }
-
-  if (!firebaseApiKey) {
-    firebaseApiKey = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY || '';
-  }
-
-  if (!firebaseApiKey) {
-    throw new Error('Configuration Firebase serveur manquante (clé API introuvable).');
-  }
-
-  const response = await fetch(
-    `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${firebaseApiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idToken: token }),
-    }
-  );
-
-  if (!response.ok) {
-    const errorData: any = await response.json().catch(() => ({}));
-    const message = errorData?.error?.message || 'Token verification failed';
-    throw new Error(message);
-  }
-
-  const data: any = await response.json();
-  const uid = data?.users?.[0]?.localId;
-  if (!uid) {
-    throw new Error('Utilisateur non identifié pour ce jeton.');
-  }
-
-  return uid;
-}
-
-/**
- * Génère la signature Cloudinary standard SHA-1 sur les paramètres autorisés.
- * Spécification Cloudinary : tri alphabétique des clés, concaténation k=v&... et ajout de apiSecret
- */
-export function generateCloudinarySignature(params: Record<string, any>, apiSecret: string): string {
-  const sortedKeys = Object.keys(params).sort();
-  const serialized = sortedKeys.map(k => `${k}=${params[k]}`).join('&');
-  return crypto.createHash('sha1').update(`${serialized}${apiSecret}`).digest('hex');
-}
-
-// Endpoint de signature Cloudinary avec vérification d'identité obligatoire
+// Route partagée avec la fonction Serverless Vercel (api/cloudinary/sign.ts)
 app.post('/api/cloudinary/sign', async (req: Request, res: Response) => {
-  try {
-    // 1. Vérification du header Authorization Bearer
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({
-        error: 'Jeton d’authentification manquant dans l’en-tête Authorization.',
-        code: 'AUTH_TOKEN_MISSING'
-      });
-    }
-
-    const idToken = authHeader.split('Bearer ')[1].trim();
-    if (!idToken) {
-      return res.status(401).json({
-        error: 'Jeton d’authentification vide.',
-        code: 'AUTH_TOKEN_EMPTY'
-      });
-    }
-
-    // 2. Vérification côté serveur du jeton Firebase ID (l'UID n'est jamais cru sur parole)
-    let verifiedUid: string;
-    try {
-      verifiedUid = await verifyFirebaseIdToken(idToken);
-    } catch (authErr: any) {
-      console.warn('Firebase ID token invalid on /api/cloudinary/sign:', authErr?.message || 'Unknown error');
-      return res.status(401).json({
-        error: 'Jeton d’authentification Firebase invalide ou expiré.',
-        code: 'AUTH_TOKEN_INVALID'
-      });
-    }
-
-    // 3. Vérification de la configuration Cloudinary côté serveur
-    const cloudName = process.env.CLOUDINARY_CLOUD_NAME || 'pb426age';
-    const apiKey = process.env.CLOUDINARY_API_KEY;
-    const apiSecret = process.env.CLOUDINARY_API_SECRET;
-
-    if (!apiKey || !apiSecret) {
-      return res.status(503).json({
-        error: 'Configuration Cloudinary serveur incomplète : CLOUDINARY_API_KEY ou CLOUDINARY_API_SECRET non défini.',
-        code: 'CLOUDINARY_CONFIG_MISSING'
-      });
-    }
-
-    // 4. Validation stricte du dossier et imposition du chemin isolé par UID
-    const requestedFolder = String(req.body?.folder || 'products').trim().toLowerCase();
-    if (requestedFolder !== 'products' && requestedFolder !== 'logos') {
-      return res.status(400).json({
-        error: 'Dossier de destination non autorisé. Seuls "products" et "logos" sont acceptés.',
-        code: 'INVALID_FOLDER'
-      });
-    }
-
-    // Chemin STRICTEMENT imposé par le serveur correspondant à l'UID authentifié
-    // Le client ne peut en aucun cas forger un chemin pour un autre vendeur
-    const targetFolder = `users/${verifiedUid}/${requestedFolder}`;
-    const timestamp = Math.floor(Date.now() / 1000);
-
-    // 5. Calcul cryptographique de la signature Cloudinary
-    const paramsToSign = {
-      folder: targetFolder,
-      timestamp: timestamp,
-    };
-
-    const signature = generateCloudinarySignature(paramsToSign, apiSecret);
-
-    // 6. Réponse sécurisée au client :
-    // L'API SECRET N'EST JAMAIS RENVOYÉ AU CLIENT NI EXPOSÉ DANS LES JOURNAUX !
-    return res.json({
-      signature,
-      timestamp,
-      apiKey,
-      cloudName,
-      folder: targetFolder,
-    });
-  } catch (error: any) {
-    console.error('Erreur lors de la génération de signature Cloudinary:', error?.message);
-    return res.status(500).json({
-      error: 'Erreur interne du serveur lors de la signature Cloudinary.',
-      code: 'INTERNAL_ERROR'
-    });
-  }
+  await handleCloudinarySign(req, res);
 });
 
 // START SERVER WITH VITE (DEV) OR STATIC DIST (PROD)

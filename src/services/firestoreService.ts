@@ -19,7 +19,8 @@ import {
   Prospect, 
   SystemConfig, 
   CurrencyType,
-  PublicStoreProfile
+  PublicStoreProfile,
+  AdminData
 } from '../types';
 
 // Default system config fallback
@@ -42,27 +43,31 @@ export const FirestoreService = {
   async getGlobalSettings(): Promise<SystemConfig> {
     const docPath = 'settings/global';
     try {
-      const fetchPromise = getDoc(doc(db, 'settings', 'global'));
-      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000));
-      const snap = await Promise.race([fetchPromise, timeoutPromise]);
+      const snap = await getDoc(doc(db, 'settings', 'global'));
       if (snap && snap.exists()) {
         const data = snap.data();
+        const trialDays = Number(data.trialDays ?? data.trial_days ?? 7);
+        const vipPrice = Number(data.vipPrice ?? data.price_vip ?? 199);
+        const vipPriceCfa = Number(data.vipPriceCfa ?? data.price_vip_cfa ?? 12000);
+        const supportWhatsapp = String(data.supportWhatsapp ?? data.whatsapp_support ?? '+212600000000');
+        const freeProductLimit = Number(data.freeProductLimit ?? 4);
+
         return {
-          price_vip: data.vipPrice ?? data.price_vip ?? 199,
-          price_vip_cfa: data.vipPriceCfa ?? data.price_vip_cfa ?? 12000,
-          trial_days: data.trialDays ?? data.trial_days ?? 7,
-          whatsapp_support: data.supportWhatsapp ?? data.whatsapp_support ?? '+212600000000',
-          freeProductLimit: data.freeProductLimit ?? 4,
-          trialDays: data.trialDays ?? 7,
-          vipPrice: data.vipPrice ?? 199,
-          vipPriceCfa: data.vipPriceCfa ?? 12000,
-          supportWhatsapp: data.supportWhatsapp ?? '+212600000000',
+          trial_days: trialDays,
+          trialDays: trialDays,
+          price_vip: vipPrice,
+          vipPrice: vipPrice,
+          price_vip_cfa: vipPriceCfa,
+          vipPriceCfa: vipPriceCfa,
+          whatsapp_support: supportWhatsapp,
+          supportWhatsapp: supportWhatsapp,
+          freeProductLimit: freeProductLimit,
           updatedAt: data.updatedAt,
         };
       }
       return DEFAULT_GLOBAL_SETTINGS;
     } catch (err) {
-      console.warn('Could not fetch global settings from Firestore, using defaults:', err);
+      console.warn('[FirestoreService] Could not fetch global settings from Firestore, using defaults:', err);
       return DEFAULT_GLOBAL_SETTINGS;
     }
   },
@@ -73,19 +78,36 @@ export const FirestoreService = {
       const payload: Record<string, any> = {
         updatedAt: new Date().toISOString(),
       };
-      if (settings.trialDays !== undefined) payload.trialDays = settings.trialDays;
-      if (settings.trial_days !== undefined) payload.trialDays = settings.trial_days;
-      if (settings.vipPrice !== undefined) payload.vipPrice = settings.vipPrice;
-      if (settings.price_vip !== undefined) payload.vipPrice = settings.price_vip;
-      if (settings.vipPriceCfa !== undefined) payload.vipPriceCfa = settings.vipPriceCfa;
-      if (settings.price_vip_cfa !== undefined) payload.vipPriceCfa = settings.price_vip_cfa;
-      if (settings.supportWhatsapp !== undefined) payload.supportWhatsapp = settings.supportWhatsapp;
-      if (settings.whatsapp_support !== undefined) payload.supportWhatsapp = settings.whatsapp_support;
-      if (settings.freeProductLimit !== undefined) payload.freeProductLimit = settings.freeProductLimit;
+      
+      // Enforce bidirectional compatibility for all field aliases
+      if (settings.trialDays !== undefined || settings.trial_days !== undefined) {
+        const val = Number(settings.trialDays ?? settings.trial_days);
+        payload.trialDays = val;
+        payload.trial_days = val;
+      }
+      if (settings.vipPrice !== undefined || settings.price_vip !== undefined) {
+        const val = Number(settings.vipPrice ?? settings.price_vip);
+        payload.vipPrice = val;
+        payload.price_vip = val;
+      }
+      if (settings.vipPriceCfa !== undefined || settings.price_vip_cfa !== undefined) {
+        const val = Number(settings.vipPriceCfa ?? settings.price_vip_cfa);
+        payload.vipPriceCfa = val;
+        payload.price_vip_cfa = val;
+      }
+      if (settings.supportWhatsapp !== undefined || settings.whatsapp_support !== undefined) {
+        const val = String(settings.supportWhatsapp ?? settings.whatsapp_support ?? '').trim();
+        payload.supportWhatsapp = val;
+        payload.whatsapp_support = val;
+      }
+      if (settings.freeProductLimit !== undefined) {
+        payload.freeProductLimit = Number(settings.freeProductLimit);
+      }
 
       await setDoc(doc(db, 'settings', 'global'), payload, { merge: true });
       return await this.getGlobalSettings();
     } catch (err) {
+      console.error('[FirestoreService] Erreur lors de la mise à jour de settings/global:', err);
       handleFirestoreError(err, OperationType.WRITE, docPath);
     }
   },
@@ -407,6 +429,153 @@ export const FirestoreService = {
       });
     } catch (err) {
       console.warn('Analytics logging failed:', err);
+    }
+  },
+
+  // ----------------------------------------------------
+  // 6. ADMIN PORTAL DATA & ACTIONS (users list, KPI metrics, account cleanup)
+  // ----------------------------------------------------
+  async getAdminData(): Promise<AdminData> {
+    const colPath = 'users';
+    try {
+      // 1. Fetch real vendor documents from 'users' collection (protected by isAdmin() rule)
+      const usersSnap = await getDocs(collection(db, 'users'));
+      const rawVendors: Vendeur[] = [];
+
+      usersSnap.forEach((docSnap) => {
+        const d = docSnap.data();
+        const rawId = docSnap.id;
+        const phone = String(d.whatsappNumber || d.phone || '');
+        const phoneNormalized = d.phoneNormalized || phone.replace(/\D/g, '');
+
+        rawVendors.push({
+          id: rawId,
+          uid: d.uid || rawId,
+          phone: phone,
+          whatsappNumber: phone,
+          phoneNormalized: phoneNormalized,
+          name: d.name || `Boutique ${phoneNormalized.slice(-4) || rawId.slice(0, 6)}`,
+          slogan: d.slogan || 'Vente directe sur WhatsApp',
+          location: d.location || 'Maroc',
+          logo: d.logo || 'https://images.unsplash.com/photo-1472851294608-062f824d29cc?auto=format&fit=crop&w=400&q=80',
+          currency: (d.currency as CurrencyType) || (phone.startsWith('+212') ? 'MAD' : 'CFA'),
+          status: d.status || (d.is_active === false ? 'Inactif' : 'Actif'),
+          role: d.role || 'seller',
+          is_active: d.is_active !== undefined ? Boolean(d.is_active) : (d.status !== 'Inactif'),
+          plan: d.plan || (d.status === 'VIP' ? 'VIP' : 'Essai'),
+          trialStartedAt: d.trialStartedAt || d.createdAt,
+          trialEndsAt: d.trialEndsAt || d.date_expiration_essai,
+          vipStartedAt: d.vipStartedAt,
+          vipEndsAt: d.vipEndsAt,
+          publicSlug: d.publicSlug || rawId,
+          date_expiration_essai: d.trialEndsAt || d.date_expiration_essai || '',
+          useLoginNumberAsPublic: Boolean(d.useLoginNumberAsPublic),
+          commercialWhatsApp: d.commercialWhatsApp || '',
+          allowCommercialContact: Boolean(d.allowCommercialContact || d.useLoginNumberAsPublic),
+          created_at: d.createdAt || d.created_at || new Date().toISOString(),
+          createdAt: d.createdAt || d.created_at || new Date().toISOString(),
+          updatedAt: d.updatedAt,
+          views: Number(d.views || 0),
+          product_clicks: Number(d.product_clicks || 0),
+          conversions: Number(d.conversions || 0),
+        });
+      });
+
+      // 2. Fetch product count across registered vendors
+      let totalProducts = 0;
+      const productPromises = rawVendors.map(async (v) => {
+        try {
+          const snap = await getDocs(collection(db, 'users', v.id, 'products'));
+          return snap.size;
+        } catch {
+          return 0;
+        }
+      });
+      const prodResults = await Promise.allSettled(productPromises);
+      prodResults.forEach((res) => {
+        if (res.status === 'fulfilled') {
+          totalProducts += res.value;
+        }
+      });
+
+      // 3. Compute KPI metrics (views, conversions)
+      let totalViews = 0;
+      let totalConversions = 0;
+      for (const v of rawVendors) {
+        totalViews += Number(v.views || 0);
+        totalConversions += Number(v.conversions || 0);
+      }
+
+      // Check analytics telemetry if accessible
+      try {
+        const analyticsSnap = await getDocs(collection(db, 'analytics'));
+        if (!analyticsSnap.empty) {
+          let aViews = 0;
+          let aConversions = 0;
+          analyticsSnap.forEach((d) => {
+            const ev = d.data();
+            if (ev?.type === 'view') aViews++;
+            if (ev?.type === 'conversion') aConversions++;
+          });
+          totalViews = Math.max(totalViews, aViews);
+          totalConversions = Math.max(totalConversions, aConversions);
+        }
+      } catch {
+        // Analytics telemetry is optional
+      }
+
+      return {
+        total_vendeurs: rawVendors.length,
+        total_products: totalProducts,
+        total_views: totalViews,
+        total_conversions: totalConversions,
+        vendeurs: rawVendors,
+      };
+    } catch (err) {
+      console.error('[FirestoreService] Erreur lors de la récupération des vendeurs / admin data:', err);
+      handleFirestoreError(err, OperationType.LIST, colPath);
+    }
+  },
+
+  async deleteUserAccount(uid: string): Promise<boolean> {
+    const docPath = `users/${uid}`;
+    try {
+      // 1. Delete products subcollection
+      try {
+        const prods = await getDocs(collection(db, 'users', uid, 'products'));
+        await Promise.all(prods.docs.map((d) => deleteDoc(d.ref)));
+      } catch (e) {
+        console.warn(`[FirestoreService] Could not clean products for ${uid}:`, e);
+      }
+      // 2. Delete prospects subcollection
+      try {
+        const prosps = await getDocs(collection(db, 'users', uid, 'prospects'));
+        await Promise.all(prosps.docs.map((d) => deleteDoc(d.ref)));
+      } catch (e) {
+        console.warn(`[FirestoreService] Could not clean prospects for ${uid}:`, e);
+      }
+      // 3. Delete user document
+      await deleteDoc(doc(db, 'users', uid));
+      return true;
+    } catch (err) {
+      console.error(`[FirestoreService] Erreur lors de la suppression du compte ${uid}:`, err);
+      handleFirestoreError(err, OperationType.DELETE, docPath);
+    }
+  },
+
+  async purgeDemoVendors(): Promise<AdminData> {
+    try {
+      const snap = await getDocs(collection(db, 'users'));
+      for (const d of snap.docs) {
+        const id = d.id;
+        if (id.startsWith('DEMO-') || id === 'VEND-000' || id.includes('demo') || id.includes('test-example')) {
+          await this.deleteUserAccount(id);
+        }
+      }
+      return await this.getAdminData();
+    } catch (err) {
+      console.error('[FirestoreService] Erreur purge demo accounts:', err);
+      handleFirestoreError(err, OperationType.DELETE, 'users/demo');
     }
   }
 };

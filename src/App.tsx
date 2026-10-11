@@ -452,9 +452,10 @@ function MainApp() {
   };
 
   // Admin config update
-  const handleUpdateConfig = async (newConf: Partial<SystemConfig>) => {
+  const handleUpdateConfig = async (newConf: Partial<SystemConfig>): Promise<SystemConfig> => {
     const updated = await ApiService.updateConfig(newConf);
     setConfig(updated);
+    return updated;
   };
 
   // Instant VIP activation toggle for testing

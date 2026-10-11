@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/cloudinary/sign",
+      "destination": "/api/cloudinary/sign"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

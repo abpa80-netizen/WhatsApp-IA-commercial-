@@ -225,20 +225,14 @@ export const ApiService = {
     });
   },
 
-  // 11. Admin: Get Admin Data
+  // 11. Admin: Get Admin Data from Firestore
   async getAdminData(): Promise<AdminData> {
-    return {
-      total_vendeurs: 0,
-      total_products: 0,
-      total_views: 0,
-      total_conversions: 0,
-      vendeurs: [],
-    };
+    return await FirestoreService.getAdminData();
   },
 
   // 11b. Admin: Purge demo accounts
   async purgeDemoVendors(): Promise<AdminData> {
-    return this.getAdminData();
+    return await FirestoreService.purgeDemoVendors();
   },
 
   // 12. Admin: Toggle Vendor Active (ON / OFF Switch)
@@ -282,8 +276,9 @@ export const ApiService = {
   },
 
   // 15. Admin: Delete vendor account
-  async deleteVendor(_vendeurId: string): Promise<boolean> {
-    return true;
+  async deleteVendor(vendeurId: string): Promise<boolean> {
+    const cleanId = vendeurId.trim();
+    return await FirestoreService.deleteUserAccount(cleanId);
   },
 
   // 16. Admin: Update Security

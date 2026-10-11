@@ -30,10 +30,12 @@ import {
 import { ApiService } from '../services/api';
 import { useToast } from './Toast';
 import { SafeStorage } from '../services/storage';
+import { auth, onAuthStateChanged } from '../firebase';
+import { AuthService } from '../services/authService';
 
 interface AdminPortalProps {
   config: SystemConfig;
-  onUpdateConfig: (newConfig: Partial<SystemConfig>) => Promise<void>;
+  onUpdateConfig: (newConfig: Partial<SystemConfig>) => Promise<SystemConfig | void>;
   onBackToApp: () => void;
   onImpersonateVendeur: (vendeur: Vendeur) => void;
 }
@@ -46,6 +48,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 }) => {
   const { showToast } = useToast();
   
+  // Track Firebase Auth user
+  const [currentUser, setCurrentUser] = useState(() => auth.currentUser);
+  const [signingInGoogle, setSigningInGoogle] = useState(false);
+  const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
+
   // PIN lock protection (isolated admin access)
   const [isUnlocked, setIsUnlocked] = useState<boolean>(() => {
     return SafeStorage.getSession('wca_admin_session') === 'true';
@@ -59,21 +66,40 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
 
   // Config editing state with safe defaults
-  const [priceVip, setPriceVip] = useState(config?.price_vip ?? 199);
-  const [priceVipCfa, setPriceVipCfa] = useState(config?.price_vip_cfa ?? 12000);
-  const [trialDays, setTrialDays] = useState(config?.trial_days ?? 7);
-  const [whatsappSupport, setWhatsappSupport] = useState(config?.whatsapp_support || '+212600000000');
+  const [priceVip, setPriceVip] = useState(config?.vipPrice ?? config?.price_vip ?? 199);
+  const [priceVipCfa, setPriceVipCfa] = useState(config?.vipPriceCfa ?? config?.price_vip_cfa ?? 12000);
+  const [trialDays, setTrialDays] = useState(config?.trialDays ?? config?.trial_days ?? 7);
+  const [whatsappSupport, setWhatsappSupport] = useState(config?.supportWhatsapp || config?.whatsapp_support || '+212600000000');
   const [savingConfig, setSavingConfig] = useState(false);
 
   // Keep local inputs in sync with config prop
   useEffect(() => {
     if (config) {
-      if (config.price_vip !== undefined) setPriceVip(config.price_vip);
-      if (config.price_vip_cfa !== undefined) setPriceVipCfa(config.price_vip_cfa);
-      if (config.trial_days !== undefined) setTrialDays(config.trial_days);
-      if (config.whatsapp_support) setWhatsappSupport(config.whatsapp_support);
+      if (config.vipPrice !== undefined || config.price_vip !== undefined) {
+        setPriceVip(config.vipPrice ?? config.price_vip!);
+      }
+      if (config.vipPriceCfa !== undefined || config.price_vip_cfa !== undefined) {
+        setPriceVipCfa(config.vipPriceCfa ?? config.price_vip_cfa!);
+      }
+      if (config.trialDays !== undefined || config.trial_days !== undefined) {
+        setTrialDays(config.trialDays ?? config.trial_days!);
+      }
+      if (config.supportWhatsapp || config.whatsapp_support) {
+        setWhatsappSupport(config.supportWhatsapp || config.whatsapp_support || '+212600000000');
+      }
     }
-  }, [config?.price_vip, config?.price_vip_cfa, config?.trial_days, config?.whatsapp_support]);
+  }, [config?.vipPrice, config?.price_vip, config?.vipPriceCfa, config?.price_vip_cfa, config?.trialDays, config?.trial_days, config?.supportWhatsapp, config?.whatsapp_support]);
+
+  // Listen to Firebase Auth state
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setCurrentUser(u);
+      if (isUnlocked) {
+        fetchAdminData(true);
+      }
+    });
+    return () => unsub();
+  }, [isUnlocked]);
 
   // Admin PIN & Security Profile
   const [adminCurrentPin, setAdminCurrentPin] = useState('');
@@ -87,10 +113,35 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     try {
       const data = await ApiService.getAdminData();
       setAdminData(data);
-    } catch {
-      if (!silent) showToast('Impossible de charger les données admin', 'error');
+      setDiagnosticError(null);
+    } catch (err: any) {
+      console.error('[AdminPortal] Erreur chargement admin data:', err);
+      let errorMsg = 'Impossible de charger les données admin';
+      try {
+        const parsed = JSON.parse(err.message);
+        errorMsg = `Erreur de permission Firestore (${parsed.operationType} ${parsed.path}) : ${parsed.error}`;
+      } catch {
+        errorMsg = err?.message || errorMsg;
+      }
+      setDiagnosticError(errorMsg);
+      if (!silent) showToast(errorMsg, 'error');
     } finally {
       if (!silent) setLoading(false);
+    }
+  };
+
+  const handleGoogleAdminLogin = async () => {
+    setSigningInGoogle(true);
+    try {
+      await AuthService.loginWithGoogle();
+      showToast('Authentification Administrateur Firebase réussie !', 'success');
+      setDiagnosticError(null);
+      await fetchAdminData(false);
+    } catch (err: any) {
+      console.error('[Admin Google Login Error]:', err);
+      showToast(err?.message || 'Erreur d’authentification Google', 'error');
+    } finally {
+      setSigningInGoogle(false);
     }
   };
 
@@ -222,15 +273,44 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     e.preventDefault();
     setSavingConfig(true);
     try {
-      await onUpdateConfig({
+      const updated = await onUpdateConfig({
         price_vip: Number(priceVip),
         price_vip_cfa: Number(priceVipCfa),
         trial_days: Number(trialDays),
         whatsapp_support: whatsappSupport.trim(),
+        vipPrice: Number(priceVip),
+        vipPriceCfa: Number(priceVipCfa),
+        trialDays: Number(trialDays),
+        supportWhatsapp: whatsappSupport.trim(),
       });
-      showToast('Configuration système mise à jour avec succès', 'success');
-    } catch {
-      showToast('Erreur lors de la mise à jour de la configuration', 'error');
+      if (updated) {
+        if (updated.vipPrice !== undefined || updated.price_vip !== undefined) {
+          setPriceVip(updated.vipPrice ?? updated.price_vip!);
+        }
+        if (updated.vipPriceCfa !== undefined || updated.price_vip_cfa !== undefined) {
+          setPriceVipCfa(updated.vipPriceCfa ?? updated.price_vip_cfa!);
+        }
+        if (updated.trialDays !== undefined || updated.trial_days !== undefined) {
+          setTrialDays(updated.trialDays ?? updated.trial_days!);
+        }
+        if (updated.supportWhatsapp || updated.whatsapp_support) {
+          setWhatsappSupport(updated.supportWhatsapp || updated.whatsapp_support || whatsappSupport);
+        }
+      }
+      showToast('Configuration globale enregistrée dans Firestore avec succès !', 'success');
+      setDiagnosticError(null);
+      await fetchAdminData(true);
+    } catch (err: any) {
+      console.error('[AdminPortal] Erreur lors de la sauvegarde de la configuration:', err);
+      let errorMsg = 'Erreur lors de la mise à jour de la configuration';
+      try {
+        const parsed = JSON.parse(err.message);
+        errorMsg = `Échec de sauvegarde Firestore (${parsed.operationType} ${parsed.path}) : ${parsed.error}`;
+      } catch {
+        errorMsg = err?.message || errorMsg;
+      }
+      setDiagnosticError(errorMsg);
+      showToast(errorMsg, 'error');
     } finally {
       setSavingConfig(false);
     }
@@ -398,6 +478,60 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6 space-y-8">
+        {/* Firebase Admin Authentication Status & Diagnostics */}
+        {currentUser && (currentUser.email === 'foosco80@gmail.com') ? (
+          <div className="bg-emerald-950/60 border border-emerald-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-md">
+            <div className="flex items-center gap-2.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+              <div>
+                <span className="font-bold text-white">Session Firebase Administrateur Active : </span>
+                <span className="font-mono text-emerald-300 font-semibold">{currentUser.email}</span>
+                <span className="text-slate-400 ml-2">UID: {currentUser.uid}</span>
+              </div>
+            </div>
+            <span className="text-[10px] font-bold text-emerald-300 bg-emerald-500/20 px-2.5 py-1 rounded-full border border-emerald-500/40 w-fit">
+              Droits Firestore Admin Validés
+            </span>
+          </div>
+        ) : (
+          <div className="bg-slate-950/90 border border-amber-500/40 rounded-3xl p-5 sm:p-6 shadow-xl space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center font-bold">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Droits Administrateur Firebase pour Firestore</h3>
+                  <p className="text-xs text-slate-400">
+                    {currentUser 
+                      ? `Connecté avec ${currentUser.email || currentUser.uid}. Le compte foosco80@gmail.com est configuré dans les règles Firestore pour autoriser la lecture des vendeurs et la modification des paramètres.`
+                      : 'Authentification Firebase requise pour autoriser la lecture de la liste des vendeurs et la sauvegarde des paramètres globaux dans Firestore.'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleGoogleAdminLogin}
+                disabled={signingInGoogle}
+                className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold px-4 py-2.5 rounded-xl text-xs shadow-md transition-all cursor-pointer disabled:opacity-50 shrink-0"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>{signingInGoogle ? 'Connexion en cours...' : 'Connexion Admin (foosco80@gmail.com)'}</span>
+              </button>
+            </div>
+
+            {diagnosticError && (
+              <div className="bg-rose-950/70 border border-rose-800/60 rounded-xl p-3 text-xs text-rose-300 space-y-1">
+                <div className="font-bold flex items-center gap-1.5 text-rose-200">
+                  <X className="w-3.5 h-3.5 text-rose-400" />
+                  <span>Journal de diagnostic Firestore :</span>
+                </div>
+                <p className="font-mono text-[11px] break-all">{diagnosticError}</p>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Dedicated Two Distinct Links Card for Testing & Publication */}
         <div className="bg-slate-950/90 rounded-3xl p-6 border border-slate-800 shadow-xl space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-slate-800">
@@ -848,6 +982,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                               ⏳ {diffDays} jour{diffDays > 1 ? 's' : ''} restant{diffDays > 1 ? 's' : ''}
                             </span>
                           )}
+                          {v.trialStartedAt && (
+                            <div className="text-[10px] text-slate-400 mt-1 font-mono">
+                              Du {new Date(v.trialStartedAt).toLocaleDateString('fr-FR')} au {new Date(targetExpiration).toLocaleDateString('fr-FR')}
+                            </div>
+                          )}
                         </td>
 
                         <td className="py-3 px-4 text-slate-400 text-xs">
@@ -952,7 +1091,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   <th className="py-3 px-4">WhatsApp</th>
                   <th className="py-3 px-4">Accès Compte (ON / OFF)</th>
                   <th className="py-3 px-4">Localisation & Devise</th>
-                  <th className="py-3 px-4">Statut VIP</th>
+                  <th className="py-3 px-4">Statut, Plan & Période</th>
                   <th className="py-3 px-4 text-center">Vues / Clics / Conv</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
@@ -1073,16 +1212,30 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                         <span className="text-[10px] font-bold text-emerald-400">{v.currency}</span>
                       </td>
 
-                      <td className="py-3 px-4">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                          v.status === 'VIP'
-                            ? 'bg-amber-400/20 text-amber-300 border border-amber-400/30'
-                            : v.status === 'Inactif'
-                            ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                            : 'bg-slate-700 text-slate-300'
-                        }`}>
-                          {v.status}
-                        </span>
+                      <td className="py-3 px-4 space-y-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                            v.status === 'VIP'
+                              ? 'bg-amber-400/20 text-amber-300 border border-amber-400/30'
+                              : v.status === 'Inactif'
+                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                              : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          }`}>
+                            {v.status}
+                          </span>
+                          <span className="px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-slate-800 text-slate-300 border border-slate-700">
+                            Plan {v.plan || (v.status === 'VIP' ? 'VIP' : 'Essai')}
+                          </span>
+                        </div>
+                        {v.trialStartedAt && v.trialEndsAt ? (
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            Essai : {new Date(v.trialStartedAt).toLocaleDateString('fr-FR')} → {new Date(v.trialEndsAt).toLocaleDateString('fr-FR')}
+                          </div>
+                        ) : v.trialEndsAt ? (
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            Fin essai : {new Date(v.trialEndsAt).toLocaleDateString('fr-FR')}
+                          </div>
+                        ) : null}
                       </td>
 
                       <td className="py-3 px-4 text-center font-mono">
