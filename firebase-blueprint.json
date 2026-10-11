@@ -1,0 +1,114 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Profil vendeur ou administrateur de la plateforme SaaS WhatsApp Commercial AI",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "UID Firebase Auth unique de l'utilisateur" },
+        "whatsappNumber": { "type": "string", "description": "Numéro WhatsApp du commerçant au format international", "maxLength": 32 },
+        "phoneNormalized": { "type": "string", "description": "Chiffres purs du numéro pour indexation et recherche", "maxLength": 20 },
+        "role": { "type": "string", "enum": ["seller", "admin"], "description": "Rôle de sécurité de l'utilisateur" },
+        "status": { "type": "string", "description": "Statut du compte : Actif, Inactif, Suspendu", "maxLength": 20 },
+        "plan": { "type": "string", "description": "Offre en cours : Essai, VIP, Gratuit", "maxLength": 20 },
+        "trialStartedAt": { "type": "string", "description": "Date ISO du début de la période d'essai gratuit" },
+        "trialEndsAt": { "type": "string", "description": "Date ISO d'expiration de l'essai" },
+        "vipStartedAt": { "type": "string", "description": "Date ISO d'activation de l'abonnement VIP" },
+        "vipEndsAt": { "type": "string", "description": "Date ISO de fin de l'abonnement VIP" },
+        "publicSlug": { "type": "string", "description": "Identifiant public unique de la boutique WhatsApp", "maxLength": 64 },
+        "name": { "type": "string", "description": "Nom commercial de la boutique", "maxLength": 100 },
+        "slogan": { "type": "string", "description": "Slogan ou message commercial", "maxLength": 200 },
+        "location": { "type": "string", "description": "Ville et pays du commerçant", "maxLength": 100 },
+        "logo": { "type": "string", "description": "URL Cloud Storage du logo de la boutique", "maxLength": 1024 },
+        "currency": { "type": "string", "enum": ["MAD", "CFA"], "description": "Devise principale de facturation" },
+        "createdAt": { "type": "string", "description": "Date de création du compte" },
+        "updatedAt": { "type": "string", "description": "Date de dernière modification" }
+      },
+      "required": ["uid", "whatsappNumber", "phoneNormalized", "role", "status", "plan", "createdAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Article individuel au catalogue d'un vendeur",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "ID unique du produit" },
+        "vendeur_id": { "type": "string", "description": "UID Firebase du vendeur propriétaire" },
+        "name": { "type": "string", "description": "Nom du produit", "maxLength": 120 },
+        "price": { "type": "number", "description": "Prix actuel de vente" },
+        "original_price": { "type": "number", "description": "Prix barré optionnel pour promotion" },
+        "description": { "type": "string", "description": "Description commerciale vendeuse", "maxLength": 2000 },
+        "images": { "type": "array", "description": "URLs Cloud Storage des photos produits" },
+        "category": { "type": "string", "description": "Catégorie de l'article", "maxLength": 80 },
+        "clicks": { "type": "number", "description": "Nombre de clics enregistrés sur la fiche" },
+        "createdAt": { "type": "string", "description": "Date ISO de création" },
+        "updatedAt": { "type": "string", "description": "Date ISO de mise à jour" }
+      },
+      "required": ["id", "vendeur_id", "name", "price", "description", "images"]
+    },
+    "Prospect": {
+      "title": "Prospect",
+      "description": "Fiche contact client CRM pour suivi commercial WhatsApp",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "ID unique du contact prospect" },
+        "vendeur_id": { "type": "string", "description": "UID Firebase du vendeur gestionnaire" },
+        "name": { "type": "string", "description": "Nom du client ou prospect", "maxLength": 100 },
+        "phone": { "type": "string", "description": "Numéro WhatsApp du client", "maxLength": 32 },
+        "notes": { "type": "string", "description": "Notes commerciales ou préférences", "maxLength": 2000 },
+        "status": { "type": "string", "enum": ["Nouveau", "Intéressé", "À relancer", "Converti", "Perdu"], "description": "Étape du pipeline de vente" },
+        "createdAt": { "type": "string", "description": "Date d'ajout au CRM" },
+        "last_contact": { "type": "string", "description": "Date ISO du dernier message envoyé" }
+      },
+      "required": ["id", "vendeur_id", "name", "phone", "status"]
+    },
+    "GlobalSettings": {
+      "title": "GlobalSettings",
+      "description": "Paramètres globaux de la plateforme SaaS WhatsApp Commercial AI",
+      "type": "object",
+      "properties": {
+        "trialDays": { "type": "number", "description": "Nombre de jours d'essai gratuit offert aux nouveaux vendeurs" },
+        "vipPrice": { "type": "number", "description": "Tarif de l'abonnement VIP (MAD)" },
+        "vipPriceCfa": { "type": "number", "description": "Tarif de l'abonnement VIP (FCFA)" },
+        "supportWhatsapp": { "type": "string", "description": "Numéro WhatsApp de support de la plateforme", "maxLength": 32 },
+        "freeProductLimit": { "type": "number", "description": "Plafond maximum de produits autorisés en mode Gratuit (défaut 4)" },
+        "updatedAt": { "type": "string", "description": "Date ISO de la dernière modification" }
+      },
+      "required": ["trialDays", "vipPrice", "supportWhatsapp", "freeProductLimit"]
+    },
+    "AnalyticsEvent": {
+      "title": "AnalyticsEvent",
+      "description": "Événement de métrique pour trafic, clics et commandes WhatsApp",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "ID de l'événement" },
+        "vendeur_id": { "type": "string", "description": "UID du vendeur concerné" },
+        "type": { "type": "string", "enum": ["view", "product_click", "conversion"], "description": "Type d'événement" },
+        "productId": { "type": "string", "description": "ID du produit concerné" },
+        "timestamp": { "type": "string", "description": "Horodatage de l'événement" }
+      },
+      "required": ["id", "vendeur_id", "type", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Comptes vendeurs et administrateurs"
+    },
+    "/users/{uid}/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Catalogue de produits isolé par vendeur"
+    },
+    "/users/{uid}/prospects/{prospectId}": {
+      "schema": { "$ref": "#/entities/Prospect" },
+      "description": "Contacts CRM isolés par vendeur"
+    },
+    "/settings/global": {
+      "schema": { "$ref": "#/entities/GlobalSettings" },
+      "description": "Configuration globale de la plateforme SaaS"
+    },
+    "/analytics/{eventId}": {
+      "schema": { "$ref": "#/entities/AnalyticsEvent" },
+      "description": "Télémétrie anonymisée des boutiques"
+    }
+  }
+}

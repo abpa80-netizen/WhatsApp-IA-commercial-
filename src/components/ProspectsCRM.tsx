@@ -757,7 +757,7 @@ export const ProspectsCRM: React.FC<ProspectsCRMProps> = ({
                 </label>
                 <input
                   type="tel"
-                  placeholder="Ex : +212612345678 ou +2250700000000"
+                  placeholder="Ex : +212600000000 ou +2250700000000"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   className={`w-full border rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#25D366] transition-colors ${

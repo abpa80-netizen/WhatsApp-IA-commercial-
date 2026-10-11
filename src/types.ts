@@ -1,20 +1,53 @@
 export type CurrencyType = 'MAD' | 'CFA';
 
-export type VendeurStatus = 'Gratuit' | 'VIP' | 'Actif' | 'Inactif';
+export type VendeurStatus = 'Gratuit' | 'VIP' | 'Actif' | 'Inactif' | 'Suspendu';
 
-export interface Vendeur {
+export type UserRole = 'seller' | 'admin' | 'vendeur';
+
+export interface PublicStoreProfile {
   id: string;
-  phone: string;
   name: string;
   slogan: string;
   location: string;
   logo: string;
   currency: CurrencyType;
   status: VendeurStatus;
+  plan?: string;
+  trialEndsAt?: string;
+  vipEndsAt?: string;
   is_active?: boolean;
-  role?: 'admin' | 'vendeur';
+  publicSlug: string;
+  orderWhatsApp?: string; // Optional commercial contact for WhatsApp checkout if explicitly provided AND allowed
+  allowCommercialContact?: boolean;
+}
+
+export interface Vendeur {
+  id: string;
+  uid?: string; // Firebase Auth UID
+  phone: string;
+  whatsappNumber?: string;
+  phoneNormalized?: string;
+  useLoginNumberAsPublic?: boolean; // Explicit opt-in: Use registered login WhatsApp number as public commercial contact
+  commercialWhatsApp?: string; // Explicit public commercial phone number (distinct from private login)
+  allowCommercialContact?: boolean; // Merchant explicitly authorises displaying commercial WhatsApp
+  name: string;
+  slogan: string;
+  location: string;
+  logo: string;
+  currency: CurrencyType;
+  status: VendeurStatus;
+  role?: UserRole;
+  is_active?: boolean;
+  plan?: 'Gratuit' | 'Essai' | 'VIP' | string;
+  trialStartedAt?: string;
+  trialEndsAt?: string;
+  vipStartedAt?: string;
+  vipEndsAt?: string;
+  publicSlug?: string;
   date_expiration_essai: string;
   created_at: string;
+  createdAt?: string;
+  updatedAt?: string;
   views?: number;
   product_clicks?: number;
   conversions?: number;
@@ -37,6 +70,8 @@ export interface Product {
   description: string;
   images: string[];
   created_at: string;
+  createdAt?: string;
+  updatedAt?: string;
   category?: string;
   clicks?: number;
 }
@@ -51,6 +86,8 @@ export interface Prospect {
   notes: string;
   status: ProspectStatus;
   created_at: string;
+  createdAt?: string;
+  updatedAt?: string;
   last_contact?: string;
 }
 
@@ -59,6 +96,12 @@ export interface SystemConfig {
   price_vip_cfa: number;
   trial_days: number;
   whatsapp_support: string;
+  freeProductLimit?: number; // Default 4
+  trialDays?: number;
+  vipPrice?: number;
+  vipPriceCfa?: number;
+  supportWhatsapp?: string;
+  updatedAt?: string;
 }
 
 export interface AdminData {

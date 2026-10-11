@@ -1,0 +1,21 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // 1. Isolation stricte des vendeurs par UID:
+    // Chaque vendeur ne peut téléverser, modifier ou supprimer que dans son propre dossier users/{uid}/...
+    match /users/{uid}/{allPaths=**} {
+      // Les visiteurs publics et clients peuvent afficher les photos des produits et logos de boutique
+      allow read: if true;
+      
+      // Seul le vendeur propriétaire authentifié peut écrire dans son dossier
+      allow write: if request.auth != null && request.auth.uid == uid
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // Par défaut : refuser tout autre chemin
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

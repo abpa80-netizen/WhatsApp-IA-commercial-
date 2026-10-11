@@ -1,0 +1,87 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default-deny all unmatched paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'foosco80@gmail.com' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // 1. Users collection (Vendeurs & Admins)
+    match /users/{uid} {
+      // Public can read seller storefront info for catalog display
+      allow get: if true;
+      allow list: if isAdmin();
+
+      // Create: User can create their own document as a 'seller'
+      allow create: if isOwner(uid) && 
+        request.resource.data.uid == uid &&
+        (request.resource.data.role == 'seller' || isAdmin());
+
+      // Update: Owner can update their profile but CANNOT self-escalate role to 'admin'
+      allow update: if (isOwner(uid) && (
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) ||
+        isAdmin()
+      )) || isAdmin();
+
+      // Delete: Only admin can delete account
+      allow delete: if isAdmin();
+
+      // 2. Products sub-collection: Scoped under users/{uid}/products/{productId}
+      match /products/{productId} {
+        // Public can view products for this vendor's store
+        allow read: if true;
+
+        // Only the vendor owner can create, update, delete their own products
+        allow create: if isOwner(uid) && isValidId(productId) && request.resource.data.vendeur_id == uid;
+        allow update: if (isOwner(uid) && request.resource.data.vendeur_id == uid) || isAdmin();
+        allow delete: if isOwner(uid) || isAdmin();
+      }
+
+      // 3. Prospects sub-collection: Scoped under users/{uid}/prospects/{prospectId}
+      match /prospects/{prospectId} {
+        // Strictly private CRM: Only the vendor owner can read or write
+        allow read, write: if isOwner(uid) || isAdmin();
+      }
+    }
+
+    // 4. Global Settings: Read by all, modified only by admin
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 5. Analytics events: Telemetry logging for views, clicks & conversions
+    match /analytics/{eventId} {
+      // Anyone can log an interaction event (page view, WhatsApp click)
+      allow create: if isValidId(eventId) && request.resource.data.vendeur_id is string;
+      
+      // Only the vendor owner or admin can read their metrics
+      allow read: if isSignedIn() && (
+        resource.data.vendeur_id == request.auth.uid || isAdmin()
+      );
+      allow update, delete: if isAdmin();
+    }
+  }
+}

@@ -4,12 +4,10 @@ import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { DatabaseService } from './server/db.js';
+import crypto from 'crypto';
+import fs from 'fs';
 
 dotenv.config();
-
-// Initialize database
-DatabaseService.init();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,290 +15,11 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-app.use(express.json({ limit: '30mb' }));
-app.use(express.urlencoded({ extended: true, limit: '30mb' }));
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
-// ==========================================
-// 1. UNIQUE ACCESS & AUTHENTICATION ENDPOINT
-// ==========================================
-// Single entry form: phone + password
-// - If phone not found: automatically register user with unique ID (e.g. VEND-102) & hash password
-// - If phone found: verify hashed password & ensure account is active (ON)
-app.post('/api/auth/access', (req: Request, res: Response) => {
-  try {
-    const { phone, password } = req.body;
-    if (!phone || !password) {
-      return res.status(400).json({
-        error: 'Le numéro WhatsApp et le mot de passe sont obligatoires.',
-        code: 'MISSING_CREDENTIALS',
-      });
-    }
-
-    const result = DatabaseService.accessByPhoneAndPassword(phone, password);
-    if (!result.success) {
-      return res.status(result.statusCode).json({
-        error: result.error,
-        code: result.code,
-      });
-    }
-
-    return res.status(result.statusCode).json({
-      success: true,
-      isNew: result.isNew,
-      message: result.isNew 
-        ? 'Compte créé avec succès ! Votre boutique et votre catalogue sont prêts.' 
-        : 'Connexion réussie !',
-      user: result.user,
-      token: result.token,
-    });
-  } catch (err: any) {
-    console.error('Error in /api/auth/access:', err);
-    return res.status(500).json({ error: 'Erreur interne du serveur lors de l’authentification' });
-  }
-});
-
-// ==========================================
-// 2. ADMIN PORTAL & ACCESS CONTROL ENDPOINTS
-// ==========================================
-// Get all vendors (auto-updated with new registered users)
-app.get('/api/admin/data', (_req: Request, res: Response) => {
-  try {
-    const data = DatabaseService.getAdminData();
-    return res.json(data);
-  } catch (err: any) {
-    console.error('Error in /api/admin/data:', err);
-    return res.status(500).json({ error: 'Erreur lors de la récupération des données admin' });
-  }
-});
-
-// Explicit purge of all demo vendors
-app.post('/api/admin/purge-demo', (_req: Request, res: Response) => {
-  try {
-    const result = DatabaseService.purgeAllDemoVendors();
-    return res.json({ success: true, purgedCount: result.purgedCount, data: result.data });
-  } catch (err: any) {
-    console.error('Error in /api/admin/purge-demo:', err);
-    return res.status(500).json({ error: 'Erreur lors de la suppression des comptes démo' });
-  }
-});
-
-// Instant Toggle ON / OFF switch for user access
-app.patch('/api/admin/vendors/:id/toggle-active', (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const updated = DatabaseService.toggleVendorActive(id);
-    if (!updated) {
-      return res.status(404).json({ error: 'Vendeur introuvable' });
-    }
-    return res.json({ success: true, vendor: updated });
-  } catch (err: any) {
-    console.error('Error toggling vendor active:', err);
-    return res.status(500).json({ error: 'Erreur lors de la mise à jour du statut d’accès' });
-  }
-});
-
-// Toggle VIP Status
-app.patch('/api/admin/vendors/:id/toggle-vip', (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const updated = DatabaseService.toggleVendorVip(id);
-    if (!updated) {
-      return res.status(404).json({ error: 'Vendeur introuvable' });
-    }
-    return res.json({ success: true, vendor: updated });
-  } catch (err: any) {
-    console.error('Error toggling vendor VIP:', err);
-    return res.status(500).json({ error: 'Erreur lors de la mise à jour VIP' });
-  }
-});
-
-// Admin: Delete vendor account
-app.delete('/api/admin/vendors/:id', (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const success = DatabaseService.deleteVendor(id);
-    if (!success) {
-      return res.status(404).json({ error: 'Vendeur introuvable' });
-    }
-    return res.json({ success: true, message: 'Vendeur supprimé avec succès' });
-  } catch (err: any) {
-    console.error('Error deleting vendor:', err);
-    return res.status(500).json({ error: 'Erreur lors de la suppression du compte vendeur' });
-  }
-});
-
-// Admin: Update security (PIN / support number)
-app.post('/api/admin/security', (req: Request, res: Response) => {
-  try {
-    const { currentPin, newPin, whatsappSupport } = req.body;
-    const currentConfig = DatabaseService.getConfig();
-
-    if (newPin) {
-      if (currentPin !== currentConfig.admin_pin && currentPin !== '1234') {
-        return res.status(401).json({ error: 'Code PIN actuel incorrect' });
-      }
-      if (newPin.trim().length < 4) {
-        return res.status(400).json({ error: 'Le nouveau code PIN doit comporter au moins 4 chiffres' });
-      }
-    }
-
-    const updated = DatabaseService.updateConfig({
-      ...(newPin ? { admin_pin: newPin.trim() } : {}),
-      ...(whatsappSupport ? { whatsapp_support: whatsappSupport.trim() } : {}),
-    });
-
-    return res.json({ success: true, config: updated });
-  } catch (err: any) {
-    console.error('Error updating admin security:', err);
-    return res.status(500).json({ error: 'Erreur lors de la mise à jour de la sécurité' });
-  }
-});
-
-// ==========================================
-// 3. VENDOR & STORE SPECIFIC DATA (STRICT ISOLATION)
-// ==========================================
-// Update Vendor Profile & Security (WhatsApp number, password, branding)
-app.patch('/api/vendors/:id/profile', (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const result = DatabaseService.updateVendorProfile(id, req.body);
-    if (!result.success) {
-      return res.status(result.statusCode).json({ error: result.error });
-    }
-    return res.json({ success: true, vendor: result.vendor });
-  } catch (err: any) {
-    console.error('Error updating vendor profile:', err);
-    return res.status(500).json({ error: 'Erreur lors de la mise à jour du profil' });
-  }
-});
-// Get single vendor profile
-app.get('/api/vendors/:id', (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const vendor = DatabaseService.getVendorById(id);
-    if (!vendor) {
-      return res.status(404).json({ error: 'Boutique introuvable' });
-    }
-    return res.json({ vendor });
-  } catch (err: any) {
-    console.error('Error fetching vendor:', err);
-    return res.status(500).json({ error: 'Erreur lors de la recherche du vendeur' });
-  }
-});
-
-// Vendor Catalog: Strict isolation (Vendor A only gets Vendor A's products)
-app.get('/api/vendors/:id/products', (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const products = DatabaseService.getProductsForVendor(id);
-    return res.json({ products });
-  } catch (err: any) {
-    console.error('Error fetching products:', err);
-    return res.status(500).json({ error: 'Erreur lors de la récupération des produits' });
-  }
-});
-
-app.post('/api/vendors/:id/products', (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const product = DatabaseService.saveProductForVendor(id, req.body);
-    return res.json({ product });
-  } catch (err: any) {
-    console.error('Error saving product:', err);
-    return res.status(500).json({ error: 'Erreur lors de l’enregistrement du produit' });
-  }
-});
-
-app.delete('/api/vendors/:id/products/:productId', (req: Request, res: Response) => {
-  try {
-    const { id, productId } = req.params;
-    const success = DatabaseService.deleteProductForVendor(id, productId);
-    return res.json({ success });
-  } catch (err: any) {
-    console.error('Error deleting product:', err);
-    return res.status(500).json({ error: 'Erreur lors de la suppression du produit' });
-  }
-});
-
-// CRM Prospects: Strict vendor isolation
-app.get('/api/vendors/:id/prospects', (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const prospects = DatabaseService.getProspectsForVendor(id);
-    return res.json({ prospects });
-  } catch (err: any) {
-    console.error('Error fetching prospects:', err);
-    return res.status(500).json({ error: 'Erreur lors de la récupération des prospects' });
-  }
-});
-
-app.post('/api/vendors/:id/prospects', (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const prospect = DatabaseService.saveProspectForVendor(id, req.body);
-    return res.json({ prospect });
-  } catch (err: any) {
-    console.error('Error saving prospect:', err);
-    return res.status(500).json({ error: 'Erreur lors de l’enregistrement du prospect' });
-  }
-});
-
-app.delete('/api/vendors/:id/prospects/:prospectId', (req: Request, res: Response) => {
-  try {
-    const { id, prospectId } = req.params;
-    const success = DatabaseService.deleteProspectForVendor(id, prospectId);
-    return res.json({ success });
-  } catch (err: any) {
-    console.error('Error deleting prospect:', err);
-    return res.status(500).json({ error: 'Erreur lors de la suppression du prospect' });
-  }
-});
-
-// Vendor Branding update
-app.patch('/api/vendors/:id/branding', (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const vendor = DatabaseService.updateBranding(id, req.body);
-    if (!vendor) return res.status(404).json({ error: 'Vendeur introuvable' });
-    return res.json({ vendor });
-  } catch (err: any) {
-    console.error('Error updating branding:', err);
-    return res.status(500).json({ error: 'Erreur lors de la mise à jour du branding' });
-  }
-});
-
-// Metrics tracking
-app.post('/api/vendors/:id/track-view', (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const { productId } = req.body || {};
-    DatabaseService.trackView(id, productId);
-    return res.json({ ok: true });
-  } catch {
-    return res.json({ ok: false });
-  }
-});
-
-app.post('/api/vendors/:id/track-conversion', (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const { productId } = req.body || {};
-    DatabaseService.trackConversion(id, productId);
-    return res.json({ ok: true });
-  } catch {
-    return res.json({ ok: false });
-  }
-});
-
-// System config
-app.get('/api/system/config', (_req: Request, res: Response) => {
-  return res.json({ config: DatabaseService.getConfig() });
-});
-
-app.post('/api/system/config', (req: Request, res: Response) => {
-  const updated = DatabaseService.updateConfig(req.body.config || req.body);
-  return res.json({ config: updated });
-});
+// Note: Old JSON file-based database endpoints (/api/auth/access, /api/admin/*, /api/vendors/*, /api/system/config)
+// have been removed to prepare for Firebase Auth & Firestore integration.
 
 const apiKey = process.env.GEMINI_API_KEY || '';
 const ai = new GoogleGenAI({
@@ -584,6 +303,153 @@ app.post('/api/ai/image/enhance', async (req: Request, res: Response) => {
   }
 });
 
+// -------------------------------------------------------------------------
+// 3. FIREBASE AUTH VERIFICATION & CLOUDINARY SECURE SIGNATURE ENDPOINT
+// -------------------------------------------------------------------------
+
+/**
+ * Vérifie de façon cryptographique et sécurisée le jeton Firebase ID côté serveur
+ * via l'API officielle Google Identity Toolkit.
+ * @returns uid de l'utilisateur authentifié (qui ne peut pas être falsifié par le client)
+ */
+export async function verifyFirebaseIdToken(token: string): Promise<string> {
+  const configPath = path.resolve(__dirname, 'firebase-applet-config.json');
+  let firebaseApiKey = '';
+  if (fs.existsSync(configPath)) {
+    try {
+      const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      firebaseApiKey = cfg.apiKey || '';
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!firebaseApiKey) {
+    firebaseApiKey = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY || '';
+  }
+
+  if (!firebaseApiKey) {
+    throw new Error('Configuration Firebase serveur manquante (clé API introuvable).');
+  }
+
+  const response = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${firebaseApiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken: token }),
+    }
+  );
+
+  if (!response.ok) {
+    const errorData: any = await response.json().catch(() => ({}));
+    const message = errorData?.error?.message || 'Token verification failed';
+    throw new Error(message);
+  }
+
+  const data: any = await response.json();
+  const uid = data?.users?.[0]?.localId;
+  if (!uid) {
+    throw new Error('Utilisateur non identifié pour ce jeton.');
+  }
+
+  return uid;
+}
+
+/**
+ * Génère la signature Cloudinary standard SHA-1 sur les paramètres autorisés.
+ * Spécification Cloudinary : tri alphabétique des clés, concaténation k=v&... et ajout de apiSecret
+ */
+export function generateCloudinarySignature(params: Record<string, any>, apiSecret: string): string {
+  const sortedKeys = Object.keys(params).sort();
+  const serialized = sortedKeys.map(k => `${k}=${params[k]}`).join('&');
+  return crypto.createHash('sha1').update(`${serialized}${apiSecret}`).digest('hex');
+}
+
+// Endpoint de signature Cloudinary avec vérification d'identité obligatoire
+app.post('/api/cloudinary/sign', async (req: Request, res: Response) => {
+  try {
+    // 1. Vérification du header Authorization Bearer
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        error: 'Jeton d’authentification manquant dans l’en-tête Authorization.',
+        code: 'AUTH_TOKEN_MISSING'
+      });
+    }
+
+    const idToken = authHeader.split('Bearer ')[1].trim();
+    if (!idToken) {
+      return res.status(401).json({
+        error: 'Jeton d’authentification vide.',
+        code: 'AUTH_TOKEN_EMPTY'
+      });
+    }
+
+    // 2. Vérification côté serveur du jeton Firebase ID (l'UID n'est jamais cru sur parole)
+    let verifiedUid: string;
+    try {
+      verifiedUid = await verifyFirebaseIdToken(idToken);
+    } catch (authErr: any) {
+      console.warn('Firebase ID token invalid on /api/cloudinary/sign:', authErr?.message || 'Unknown error');
+      return res.status(401).json({
+        error: 'Jeton d’authentification Firebase invalide ou expiré.',
+        code: 'AUTH_TOKEN_INVALID'
+      });
+    }
+
+    // 3. Vérification de la configuration Cloudinary côté serveur
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME || 'pb426age';
+    const apiKey = process.env.CLOUDINARY_API_KEY;
+    const apiSecret = process.env.CLOUDINARY_API_SECRET;
+
+    if (!apiKey || !apiSecret) {
+      return res.status(503).json({
+        error: 'Configuration Cloudinary serveur incomplète : CLOUDINARY_API_KEY ou CLOUDINARY_API_SECRET non défini.',
+        code: 'CLOUDINARY_CONFIG_MISSING'
+      });
+    }
+
+    // 4. Validation stricte du dossier et imposition du chemin isolé par UID
+    const requestedFolder = String(req.body?.folder || 'products').trim().toLowerCase();
+    if (requestedFolder !== 'products' && requestedFolder !== 'logos') {
+      return res.status(400).json({
+        error: 'Dossier de destination non autorisé. Seuls "products" et "logos" sont acceptés.',
+        code: 'INVALID_FOLDER'
+      });
+    }
+
+    // Chemin STRICTEMENT imposé par le serveur correspondant à l'UID authentifié
+    // Le client ne peut en aucun cas forger un chemin pour un autre vendeur
+    const targetFolder = `users/${verifiedUid}/${requestedFolder}`;
+    const timestamp = Math.floor(Date.now() / 1000);
+
+    // 5. Calcul cryptographique de la signature Cloudinary
+    const paramsToSign = {
+      folder: targetFolder,
+      timestamp: timestamp,
+    };
+
+    const signature = generateCloudinarySignature(paramsToSign, apiSecret);
+
+    // 6. Réponse sécurisée au client :
+    // L'API SECRET N'EST JAMAIS RENVOYÉ AU CLIENT NI EXPOSÉ DANS LES JOURNAUX !
+    return res.json({
+      signature,
+      timestamp,
+      apiKey,
+      cloudName,
+      folder: targetFolder,
+    });
+  } catch (error: any) {
+    console.error('Erreur lors de la génération de signature Cloudinary:', error?.message);
+    return res.status(500).json({
+      error: 'Erreur interne du serveur lors de la signature Cloudinary.',
+      code: 'INTERNAL_ERROR'
+    });
+  }
+});
+
 // START SERVER WITH VITE (DEV) OR STATIC DIST (PROD)
 async function startServer() {
   const isProd = process.env.NODE_ENV === 'production';
@@ -608,7 +474,12 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start server:', err);
-  process.exit(1);
-});
+export { app };
+export default app;
+
+if (process.env.NODE_ENV !== 'test') {
+  startServer().catch((err) => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
+  });
+}

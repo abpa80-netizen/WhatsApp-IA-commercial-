@@ -4,9 +4,12 @@ import {
   Product, 
   Prospect, 
   SystemConfig, 
-  AIMessageParams 
+  AIMessageParams,
+  PublicStoreProfile 
 } from './types';
 import { ApiService, initSeedData, DEFAULT_CONFIG } from './services/api';
+import { AuthService } from './services/authService';
+import { auth, onAuthStateChanged } from './firebase';
 import { ToastProvider, useToast } from './components/Toast';
 import { TrialBanner } from './components/TrialBanner';
 import { VipUpgradeModal } from './components/VipUpgradeModal';
@@ -33,7 +36,8 @@ import {
   MessageCircle,
   Menu,
   X,
-  UserCheck
+  UserCheck,
+  ArrowLeft
 } from 'lucide-react';
 
 type ActiveTab = 'dashboard' | 'catalog' | 'ai' | 'crm' | 'branding';
@@ -87,7 +91,7 @@ function MainApp() {
 
   // Portal routing state - initialized synchronously from URL
   const [viewMode, setViewMode] = useState<'app' | 'store' | 'admin'>(initialRoute.mode);
-  const [publicStoreVendeur, setPublicStoreVendeur] = useState<Vendeur | null>(null);
+  const [publicStoreVendeur, setPublicStoreVendeur] = useState<Vendeur | PublicStoreProfile | null>(null);
   const [publicStoreProducts, setPublicStoreProducts] = useState<Product[]>([]);
   const [storeLoading, setStoreLoading] = useState<boolean>(initialRoute.mode === 'store');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -114,13 +118,40 @@ function MainApp() {
         return;
       }
 
-      // 2. If in a sub-view ('store' or 'admin'), return to the vendor dashboard
+      // Check current route from URL parameters
+      const currentRoute = getInitialRouteInfo();
+
+      // 2. If current URL still indicates a public store, stay in store mode
+      if (currentRoute.mode === 'store') {
+        if (viewMode !== 'store') {
+          setViewMode('store');
+        }
+        return;
+      }
+
+      // 3. If current URL indicates admin, stay in admin mode
+      if (currentRoute.mode === 'admin') {
+        if (viewMode !== 'admin') {
+          setViewMode('admin');
+        }
+        return;
+      }
+
+      // 4. For public visitors without merchant credentials:
+      // Never switch to 'app' (which would display the login/signup screen)
+      if (!activeVendeur) {
+        if (publicStoreVendeur) {
+          setViewMode('store');
+        }
+        return;
+      }
+
+      // 5. For logged-in merchants navigating their own workspace:
       if (viewMode !== 'app') {
         setViewMode('app');
         return;
       }
 
-      // 3. If in a sub-tab of the dashboard, return to the main dashboard tab
       if (activeTab !== 'dashboard') {
         setActiveTab('dashboard');
         return;
@@ -129,7 +160,7 @@ function MainApp() {
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [isVipModalOpen, viewMode, activeTab]);
+  }, [isVipModalOpen, viewMode, activeTab, activeVendeur, publicStoreVendeur]);
 
   const handleSelectTab = (tab: ActiveTab) => {
     if (tab === activeTab) return;
@@ -163,76 +194,105 @@ function MainApp() {
   useEffect(() => {
     initSeedData();
     const route = getInitialRouteInfo();
+    let isSubscribed = true;
 
-    const loadInitial = async () => {
-      try {
-        const conf = await ApiService.getConfig();
-        setConfig(conf);
+    // 1. Non-blocking background config fetch: loads in parallel without delaying Auth
+    ApiService.getConfig()
+      .then((conf) => {
+        if (isSubscribed && conf) {
+          setConfig(conf);
+        }
+      })
+      .catch((err) => {
+        console.warn('Config fetch error, using defaults:', err);
+      });
 
-        // If client route detected (?vendeur=... or /catalog/...)
-        if (route.mode === 'store' && route.targetVendeurId) {
-          setStoreLoading(true);
-          try {
-            const targetVendeur = await ApiService.getVendeur(route.targetVendeurId);
-            if (targetVendeur) {
-              setPublicStoreVendeur(targetVendeur);
-              const prods = await ApiService.getCatalog(targetVendeur.id);
+    // 2. Client route handling (?vendeur=... or /catalog/...)
+    if (route.mode === 'store' && route.targetVendeurId) {
+      setStoreLoading(true);
+      ApiService.getPublicStoreProfile(route.targetVendeurId)
+        .then(async (publicStore) => {
+          if (!isSubscribed) return;
+          if (publicStore) {
+            setPublicStoreVendeur(publicStore);
+            const prods = await ApiService.getCatalog(publicStore.id);
+            if (isSubscribed) {
               setPublicStoreProducts(prods);
-              ApiService.trackView(targetVendeur.id);
-            } else {
-              // Construct seamless vendor profile using the WhatsApp digits so client can browse instantly
-              const cleanPhone = route.targetVendeurId.replace(/\D/g, '');
-              const fallbackVendeur: Vendeur = {
-                id: route.targetVendeurId,
-                phone: cleanPhone || route.targetVendeurId,
-                name: `Boutique ${cleanPhone || route.targetVendeurId}`,
-                slogan: 'Vente directe & service rapide sur WhatsApp',
-                location: cleanPhone.startsWith('212') ? 'Casablanca, Maroc' : 'Abidjan, Côte d’Ivoire',
-                logo: 'https://images.unsplash.com/photo-1472851294608-062f824d29cc?auto=format&fit=crop&w=400&q=80',
-                currency: cleanPhone.startsWith('212') ? 'MAD' : 'CFA',
-                status: 'Gratuit',
-                date_expiration_essai: new Date(Date.now() + 7 * 86400000).toISOString(),
-                created_at: new Date().toISOString(),
-                views: 1,
-                product_clicks: 0,
-                conversions: 0,
-              };
-              setPublicStoreVendeur(fallbackVendeur);
-              const prods = await ApiService.getCatalog(route.targetVendeurId);
-              setPublicStoreProducts(prods);
-              ApiService.trackView(fallbackVendeur.id);
+              ApiService.trackView(publicStore.id);
             }
-          } catch (err) {
-            console.error('Error loading public store:', err);
-          } finally {
+          } else {
+            setPublicStoreVendeur(null);
+            setPublicStoreProducts([]);
+          }
+        })
+        .catch((err) => {
+          console.error('Error loading public store:', err);
+          if (isSubscribed) {
+            setPublicStoreVendeur(null);
+          }
+        })
+        .finally(() => {
+          if (isSubscribed) {
             setStoreLoading(false);
           }
-        } else if (route.mode === 'admin') {
-          setViewMode('admin');
-        }
+        });
+    } else if (route.mode === 'admin') {
+      setViewMode('admin');
+    }
 
-        // Try load saved session for merchant dashboard
-        const savedVendeurId = localStorage.getItem('wca_current_vendeur_id');
-        if (savedVendeurId) {
-          const v = await ApiService.getVendeur(savedVendeurId);
-          if (v) {
-            setActiveVendeur(v);
-            const [prods, prosps] = await Promise.all([
-              ApiService.getCatalog(v.id),
-              ApiService.getProspects(v.id),
-            ]);
-            setProducts(prods);
-            setProspects(prosps);
-          }
-        }
-      } catch (err) {
-        console.error('Initialization error:', err);
-      } finally {
+    // Safety timeout: Ensures loading screen never hangs more than 2 seconds
+    const safetyTimer = setTimeout(() => {
+      if (isSubscribed) {
         setLoading(false);
       }
-    };
+    }, 2000);
 
-    loadInitial();
+    // 3. Real Firebase Auth state listener registered IMMEDIATELY
+    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (!isSubscribed) return;
+
+      if (firebaseUser) {
+        try {
+          const v = await ApiService.getVendeur(firebaseUser.uid);
+          if (!isSubscribed) return;
+          if (v) {
+            setActiveVendeur(v);
+            localStorage.setItem('wca_current_vendeur_id', v.id);
+            // Load products and prospects in parallel
+            const [prods, prosps] = await Promise.all([
+              ApiService.getCatalog(v.id).catch(() => []),
+              ApiService.getProspects(v.id).catch(() => []),
+            ]);
+            if (isSubscribed) {
+              setProducts(prods);
+              setProspects(prosps);
+            }
+          } else {
+            setActiveVendeur(null);
+            localStorage.removeItem('wca_current_vendeur_id');
+          }
+        } catch (err) {
+          console.error('Error fetching merchant profile for auth user:', err);
+          if (isSubscribed) {
+            setActiveVendeur(null);
+          }
+        }
+      } else {
+        setActiveVendeur(null);
+        localStorage.removeItem('wca_current_vendeur_id');
+      }
+
+      if (isSubscribed) {
+        clearTimeout(safetyTimer);
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      isSubscribed = false;
+      clearTimeout(safetyTimer);
+      unsubscribeAuth();
+    };
   }, []);
 
   // When active vendor changes, load their products and prospects
@@ -260,6 +320,7 @@ function MainApp() {
 
   const handleLogout = () => {
     localStorage.removeItem('wca_current_vendeur_id');
+    AuthService.logout().catch(() => {});
     setActiveVendeur(null);
     showToast('Déconnexion effectuée', 'info');
   };
@@ -436,6 +497,7 @@ function MainApp() {
 
       // Guard: if store account is deactivated (OFF), show polite notice to customer
       if (storeTarget.is_active === false || storeTarget.status === 'Inactif') {
+        const contactDigits = ((storeTarget as PublicStoreProfile).orderWhatsApp || (storeTarget as Vendeur).phone || '').replace(/\D/g, '');
         return (
           <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center p-4">
             <div className="w-full max-w-md bg-slate-800/90 border border-slate-700 rounded-3xl p-6 sm:p-8 text-center space-y-4 shadow-2xl">
@@ -446,17 +508,19 @@ function MainApp() {
               <p className="text-slate-300 text-xs sm:text-sm leading-relaxed">
                 Le catalogue en ligne de <strong className="text-white">{storeTarget.name}</strong> est actuellement en pause ou désactivé par l’administration.
               </p>
-              <div className="pt-2">
-                <a
-                  href={`https://wa.me/${storeTarget.phone.replace(/\D/g, '')}?text=${encodeURIComponent(`Bonjour ${storeTarget.name}, je souhaitais consulter votre catalogue en ligne.`)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-bold py-3 px-4 rounded-xl text-xs shadow-md transition-all"
-                >
-                  <MessageCircle className="w-4 h-4 fill-current" />
-                  <span>Contacter {storeTarget.name} sur WhatsApp</span>
-                </a>
-              </div>
+              {contactDigits && (
+                <div className="pt-2">
+                  <a
+                    href={`https://wa.me/${contactDigits}?text=${encodeURIComponent(`Bonjour ${storeTarget.name}, je souhaitais consulter votre catalogue en ligne.`)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-bold py-3 px-4 rounded-xl text-xs shadow-md transition-all"
+                  >
+                    <MessageCircle className="w-4 h-4 fill-current" />
+                    <span>Contacter {storeTarget.name} sur WhatsApp</span>
+                  </a>
+                </div>
+              )}
             </div>
           </div>
         );
@@ -472,6 +536,37 @@ function MainApp() {
         />
       );
     }
+
+    // If store was not found (invalid public slug or deleted store), show safe 404 screen
+    return (
+      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center p-4">
+        <div className="w-full max-w-md bg-slate-800/90 border border-slate-700 rounded-3xl p-6 sm:p-8 text-center space-y-4 shadow-2xl">
+          <div className="w-16 h-16 rounded-2xl bg-slate-700 text-slate-400 flex items-center justify-center mx-auto">
+            <ShoppingBag className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-bold text-white">Boutique introuvable</h2>
+          <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+            Le lien de boutique que vous avez suivi n'existe pas ou n'est plus actif.
+          </p>
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== 'undefined' && window.history.length > 1) {
+                  window.history.back();
+                } else {
+                  window.location.reload();
+                }
+              }}
+              className="bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-bold py-2.5 px-5 rounded-xl text-xs transition-all cursor-pointer inline-flex items-center gap-1.5"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Retour à la page précédente</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   // 2. ADMIN PORTAL VIEW

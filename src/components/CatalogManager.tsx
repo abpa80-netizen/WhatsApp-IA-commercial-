@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { formatCurrency } from '../services/aiGenerator';
 import { useToast } from './Toast';
-import { processImageFile } from '../services/imageUpload';
+import { uploadImageToStorage, ACCEPTED_IMAGE_TYPES } from '../services/imageUpload';
 import { GeminiClient } from '../services/geminiClient';
 
 interface CatalogManagerProps {
@@ -160,14 +160,14 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
       const newCompressedImages: string[] = [];
 
       for (const file of filesToProcess) {
-        const compressed = await processImageFile(file, 900, 900, 0.82);
-        newCompressedImages.push(compressed);
+        const uploadedUrl = await uploadImageToStorage(file, 'products', vendeur.id);
+        newCompressedImages.push(uploadedUrl);
       }
 
       setImages((prev) => [...prev, ...newCompressedImages].slice(0, 3));
-      showToast(`${newCompressedImages.length} photo(s) ajoutée(s) avec succès !`, 'success');
-    } catch {
-      showToast('Erreur lors du traitement de l’image', 'error');
+      showToast(`${newCompressedImages.length} photo(s) téléversée(s) et optimisée(s) sur Cloudinary ! ✨`, 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Erreur lors du téléversement de l’image', 'error');
     } finally {
       setIsUploadingImages(false);
       e.target.value = '';
@@ -765,7 +765,7 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
                       <label className="cursor-pointer block">
                         <input
                           type="file"
-                          accept="image/*"
+                          accept={ACCEPTED_IMAGE_TYPES.join(',')}
                           multiple
                           onChange={handleFilesUpload}
                           className="hidden"

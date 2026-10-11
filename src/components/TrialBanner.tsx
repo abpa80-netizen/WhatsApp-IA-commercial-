@@ -29,14 +29,19 @@ export const TrialBanner: React.FC<TrialBannerProps> = ({
 
   useEffect(() => {
     const calculateTime = () => {
-      // Dynamic trial calculation based on registration date and current config.trial_days
-      const createdTime = vendeur?.created_at ? new Date(vendeur.created_at).getTime() : Date.now();
-      const trialDays = Number(config?.trial_days) || 7;
-      const dynamicExpiration = createdTime + trialDays * 86400000;
-      const serverExpiration = vendeur?.date_expiration_essai ? new Date(vendeur.date_expiration_essai).getTime() : 0;
+      // Dynamic trial calculation based on registration date and current config.trialDays / config.trial_days
+      const createdTime = vendeur?.trialStartedAt 
+        ? new Date(vendeur.trialStartedAt).getTime() 
+        : (vendeur?.created_at ? new Date(vendeur.created_at).getTime() : Date.now());
+      const effectiveTrialDays = config?.trialDays ?? config?.trial_days;
+      const serverExpiration = vendeur?.trialEndsAt 
+        ? new Date(vendeur.trialEndsAt).getTime() 
+        : (vendeur?.date_expiration_essai ? new Date(vendeur.date_expiration_essai).getTime() : 0);
       
-      // Use dynamicExpiration so changes made by admin in trial_days react instantly for all trial vendors!
-      const targetExpiration = dynamicExpiration || serverExpiration;
+      const targetExpiration = (typeof effectiveTrialDays === 'number' && effectiveTrialDays > 0)
+        ? (createdTime + effectiveTrialDays * 86400000)
+        : serverExpiration;
+
       const now = Date.now();
       const diff = targetExpiration - now;
 
@@ -55,7 +60,7 @@ export const TrialBanner: React.FC<TrialBannerProps> = ({
     // High-precision live countdown updated every second
     const interval = setInterval(calculateTime, 1000);
     return () => clearInterval(interval);
-  }, [vendeur?.created_at, vendeur?.date_expiration_essai, config?.trial_days]);
+  }, [vendeur?.created_at, vendeur?.trialStartedAt, vendeur?.trialEndsAt, vendeur?.date_expiration_essai, config?.trialDays, config?.trial_days]);
 
   if (!vendeur) return null;
 
@@ -81,6 +86,11 @@ export const TrialBanner: React.FC<TrialBannerProps> = ({
   }
 
   const isExpired = timeLeft.isExpired || vendeur.status === 'Inactif';
+  const effectiveDays = config?.trialDays ?? config?.trial_days;
+  const trialDaysLabel = typeof effectiveDays === 'number' && effectiveDays > 0 ? `${effectiveDays} jours` : 'Période d’essai';
+  const countdownTitle = typeof effectiveDays === 'number' && effectiveDays > 0 
+    ? `Compte à rebours Essai Gratuit (${effectiveDays}j) :` 
+    : 'Compte à rebours Essai Gratuit :';
 
   return (
     <div 
@@ -102,12 +112,12 @@ export const TrialBanner: React.FC<TrialBannerProps> = ({
           <div className="flex items-center gap-2 flex-wrap">
             {isExpired ? (
               <span>
-                <strong>Période d’essai de {config.trial_days || 7} jours terminée :</strong> Passez en VIP pour réactiver votre catalogue illimité et l’IA.
+                <strong>{trialDaysLabel} terminée :</strong> Passez en VIP pour réactiver votre catalogue illimité et l’IA.
               </span>
             ) : (
               <div className="flex items-center gap-2 flex-wrap">
                 <span>
-                  <strong>Compte à rebours Essai Gratuit ({config.trial_days}j) :</strong>
+                  <strong>{countdownTitle}</strong>
                 </span>
                 <span className="font-mono font-bold bg-white text-emerald-800 border border-emerald-300 px-2.5 py-0.5 rounded-md shadow-2xs tracking-wider">
                   {timeLeft.days}j {String(timeLeft.hours).padStart(2, '0')}h {String(timeLeft.minutes).padStart(2, '0')}m {String(timeLeft.seconds).padStart(2, '0')}s

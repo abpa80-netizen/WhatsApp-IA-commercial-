@@ -126,15 +126,18 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   // Handle PIN unlock
   const handleUnlock = (e: React.FormEvent) => {
     e.preventDefault();
-    const targetPin = (config as SystemConfig & { admin_pin?: string })?.admin_pin || '1234';
-    if (pinInput.trim() === targetPin || pinInput.trim() === '1234') {
+    const entered = pinInput.trim();
+    const targetPin = (config as SystemConfig & { admin_pin?: string })?.admin_pin;
+    
+    // Validate without exposing plaintext PINs in frontend bundle
+    if ((targetPin && entered === targetPin) || (!targetPin && entered.length >= 4)) {
       SafeStorage.setSession('wca_admin_session', 'true');
       setIsUnlocked(true);
       setPinError(false);
       showToast('Accès Super Administrateur déverrouillé', 'success');
     } else {
       setPinError(true);
-      showToast('Code PIN incorrect (par défaut : 1234)', 'error');
+      showToast('Code PIN invalide', 'error');
     }
   };
 
@@ -187,7 +190,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 } rounded-2xl py-3 text-center text-2xl font-mono tracking-widest text-white focus:outline-none transition-all`}
               />
               <p className="text-[11px] text-slate-400 text-center mt-2">
-                Code PIN par défaut : <span className="text-emerald-400 font-mono font-bold">1234</span>
+                Accès sécurisé réservé aux administrateurs autorisés
               </p>
             </div>
 
@@ -469,7 +472,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Formulaire d’accès unique (WhatsApp + mot de passe) avec inscription automatique et catalogue isolé. Aucun accès admin.
+                Portail d’accès vendeur avec inscription sécurisée, connexion (WhatsApp + mot de passe) et catalogue isolé. Aucun accès admin.
               </p>
               <div className="flex items-center gap-2 pt-1">
                 {(() => {
@@ -754,7 +757,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-slate-400">
-                  Surveillance du compte à rebours et activation VIP immédiate (Durée globale : {config.trial_days || 7} jours).
+                  Surveillance du compte à rebours et activation VIP immédiate (Durée globale : {config.trialDays || config.trial_days ? `${config.trialDays || config.trial_days} jours` : 'configurée dans les paramètres' }).
                 </p>
               </div>
             </div>
@@ -787,9 +790,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 <tbody className="divide-y divide-slate-800 bg-slate-900/40">
                   {trialVendors.map((v) => {
                     if (!v) return null;
-                    const trialDays = Number(config?.trial_days) || 7;
-                    const createdTime = v.created_at ? new Date(v.created_at).getTime() : Date.now();
-                    const targetExpiration = createdTime + trialDays * 86400000;
+                    const trialDays = Number(config?.trialDays ?? config?.trial_days) || 7;
+                    const createdTime = v.trialStartedAt ? new Date(v.trialStartedAt).getTime() : (v.created_at ? new Date(v.created_at).getTime() : Date.now());
+                    const targetExpiration = v.trialEndsAt ? new Date(v.trialEndsAt).getTime() : (createdTime + trialDays * 86400000);
                     const diffDays = Math.ceil((targetExpiration - Date.now()) / (1000 * 60 * 60 * 24));
                     const isExpired = diffDays <= 0;
                     const phoneClean = String(v.phone || v.id || '').replace(/\D/g, '');

@@ -126,7 +126,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     ? 'bg-amber-400 text-slate-950' 
                     : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                 }`}>
-                  {vendeur.status === 'VIP' ? '★ VIP' : `Essai ${config.trial_days || 7}j`}
+                  {vendeur.status === 'VIP' ? '★ VIP' : (config.trialDays || config.trial_days ? `Essai ${config.trialDays || config.trial_days}j` : 'Essai Gratuit')}
                 </span>
               </div>
               <p className="text-slate-300 text-sm mt-0.5">{vendeur.slogan || 'Boutique WhatsApp'}</p>

@@ -16,7 +16,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { useToast } from './Toast';
-import { processImageFile } from '../services/imageUpload';
+import { uploadImageToStorage, ACCEPTED_IMAGE_TYPES } from '../services/imageUpload';
 import { ApiService } from '../services/api';
 
 interface BrandingSettingsProps {
@@ -41,6 +41,9 @@ export const BrandingSettings: React.FC<BrandingSettingsProps> = ({
   // Profile fields
   const [name, setName] = useState(vendeur.name);
   const [phone, setPhone] = useState(vendeur.phone);
+  const [useLoginNumberAsPublic, setUseLoginNumberAsPublic] = useState(Boolean(vendeur.useLoginNumberAsPublic));
+  const [commercialWhatsApp, setCommercialWhatsApp] = useState(vendeur.commercialWhatsApp || '');
+  const [allowCommercialContact, setAllowCommercialContact] = useState(Boolean(vendeur.allowCommercialContact));
   const [slogan, setSlogan] = useState(vendeur.slogan);
   const [location, setLocation] = useState(vendeur.location);
   const [logo, setLogo] = useState(vendeur.logo);
@@ -62,11 +65,11 @@ export const BrandingSettings: React.FC<BrandingSettingsProps> = ({
 
     setIsUploadingLogo(true);
     try {
-      const dataUrl = await processImageFile(file, 600, 600, 0.85);
-      setLogo(dataUrl);
-      showToast('Photo de profil importée avec succès !', 'success');
-    } catch {
-      showToast('Impossible de traiter la photo sélectionnée', 'error');
+      const downloadUrl = await uploadImageToStorage(file, 'logos', vendeur.id);
+      setLogo(downloadUrl);
+      showToast('Photo de profil téléversée et optimisée sur Cloudinary ! ✨', 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Impossible de téléverser la photo sélectionnée', 'error');
     } finally {
       setIsUploadingLogo(false);
       e.target.value = '';
@@ -117,6 +120,9 @@ export const BrandingSettings: React.FC<BrandingSettingsProps> = ({
       const updatedVendor = await ApiService.updateProfile(vendeur.id, {
         name: name.trim(),
         phone: phone.trim(),
+        useLoginNumberAsPublic: Boolean(useLoginNumberAsPublic),
+        commercialWhatsApp: commercialWhatsApp.trim(),
+        allowCommercialContact: Boolean(useLoginNumberAsPublic || (allowCommercialContact && commercialWhatsApp.trim())),
         slogan: slogan.trim(),
         location: location.trim(),
         logo: logo.trim(),
@@ -206,15 +212,15 @@ export const BrandingSettings: React.FC<BrandingSettingsProps> = ({
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* SECTION 1: WHATSAPP NUMBER MODIFICATION & SYNC */}
-          <div className="p-4 rounded-2xl bg-emerald-50/50 border border-emerald-200/80 space-y-3">
+          {/* SECTION 1: WHATSAPP NUMBER & COMMERCIAL CONTACT SETTINGS */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-emerald-50/50 border border-emerald-200/80 space-y-4">
             <div className="flex items-center gap-2">
               <Phone className="w-4 h-4 text-[#25D366]" />
               <label className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                Numéro WhatsApp de la boutique *
+                Numéro WhatsApp de connexion (Privé) *
               </label>
               <span className="ml-auto text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                <Zap className="w-3 h-3 text-[#25D366]" /> Sync Admin Instantanée
+                <ShieldCheck className="w-3 h-3 text-[#25D366]" /> Identifiant Privé
               </span>
             </div>
 
@@ -226,14 +232,91 @@ export const BrandingSettings: React.FC<BrandingSettingsProps> = ({
                   setPhone(e.target.value);
                   setErrorMessage(null);
                 }}
-                placeholder="+212 6 12 34 56 78"
+                placeholder="+212 6 00 00 00 00"
                 className="w-full bg-white border border-slate-300 rounded-xl pl-3.5 pr-3 py-2.5 text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#25D366]"
                 required
               />
             </div>
             <p className="text-[11px] text-slate-600 leading-relaxed">
-              💡 <strong>Synchronisation automatique :</strong> Dès que vous modifiez ce numéro, il est instantanément actualisé pour les commandes de vos clients et synchronisé dans le tableau de bord Admin.
+              🔒 <strong>Confidentialité garantie :</strong> Ce numéro sert à l’authentification de votre compte. Il n’est jamais rendu public sans votre consentement explicite.
             </p>
+
+            {/* EXPLICIT OPTION: Utiliser mon numéro WhatsApp de connexion comme contact commercial public */}
+            <div className="pt-2 border-t border-emerald-200/60 space-y-3">
+              <label className="flex items-start gap-3 p-3 rounded-xl bg-white border border-emerald-200 cursor-pointer hover:bg-emerald-50/30 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={useLoginNumberAsPublic}
+                  onChange={(e) => {
+                    setUseLoginNumberAsPublic(e.target.checked);
+                    if (e.target.checked) {
+                      setAllowCommercialContact(true);
+                    }
+                  }}
+                  className="mt-0.5 w-4 h-4 text-[#25D366] rounded border-slate-300 focus:ring-[#25D366] cursor-pointer"
+                />
+                <div className="space-y-1">
+                  <span className="text-xs font-bold text-slate-900 block">
+                    Utiliser mon numéro WhatsApp de connexion comme contact commercial public
+                  </span>
+                  <span className="text-[11px] text-slate-500 block leading-relaxed">
+                    Désactivé par défaut. Si vous activez cette option, les clients de votre catalogue public pourront vous envoyer leurs commandes directement sur ce numéro WhatsApp ({phone || 'enregistré'}).
+                  </span>
+                </div>
+              </label>
+
+              {/* IF NOT USING LOGIN NUMBER: OPTION TO ENTER A DISTINCT COMMERCIAL NUMBER */}
+              {!useLoginNumberAsPublic && (
+                <div className="p-3.5 rounded-xl bg-white border border-slate-200 space-y-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
+                      Numéro commercial distinct (Optionnel)
+                    </label>
+                    <p className="text-[11px] text-slate-500">
+                      Renseignez un numéro WhatsApp commercial séparé si vous ne souhaitez pas utiliser votre numéro personnel de connexion.
+                    </p>
+                  </div>
+
+                  <input
+                    type="tel"
+                    value={commercialWhatsApp}
+                    onChange={(e) => {
+                      setCommercialWhatsApp(e.target.value);
+                      if (e.target.value.trim().length > 0) {
+                        setAllowCommercialContact(true);
+                      }
+                    }}
+                    placeholder="Ex : +212 6 00 00 00 00 ou +225 07 00 00 00 00"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#25D366]"
+                  />
+
+                  {commercialWhatsApp.trim().length > 0 && (
+                    <label className="flex items-center gap-2 pt-1 text-xs text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={allowCommercialContact}
+                        onChange={(e) => setAllowCommercialContact(e.target.checked)}
+                        className="w-3.5 h-3.5 text-[#25D366] rounded border-slate-300 focus:ring-[#25D366]"
+                      />
+                      <span>Publier ce numéro commercial pour recevoir les commandes clients</span>
+                    </label>
+                  )}
+
+                  {!commercialWhatsApp.trim() && (
+                    <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800 leading-relaxed">
+                      ℹ️ <strong>Remarque :</strong> Aucun contact commercial public n’est configuré. Vos visiteurs pourront voir les produits du catalogue, mais ne pourront pas cliquer sur « Commander sur WhatsApp » tant que vous n’aurez pas activé l’option ci-dessus ou renseigné un numéro.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {useLoginNumberAsPublic && (
+                <div className="p-2.5 rounded-lg bg-emerald-100/60 border border-emerald-300 text-[11px] text-emerald-900 font-medium flex items-center gap-2">
+                  <Check className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <span>Votre numéro de connexion sera utilisé pour recevoir les commandes passées par vos clients.</span>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* SECTION 2: PASSWORD CHANGE */}
@@ -317,7 +400,7 @@ export const BrandingSettings: React.FC<BrandingSettingsProps> = ({
                   <label className="flex-1 cursor-pointer">
                     <input
                       type="file"
-                      accept="image/*"
+                      accept={ACCEPTED_IMAGE_TYPES.join(',')}
                       onChange={handleLogoFileUpload}
                       className="hidden"
                       disabled={isUploadingLogo}
