@@ -10,6 +10,7 @@ export function usePWASelective(enabled: boolean) {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
+  const [isAndroid, setIsAndroid] = useState(false);
 
   useEffect(() => {
     // 1. Check if running in standalone mode (already installed)
@@ -18,10 +19,12 @@ export function usePWASelective(enabled: boolean) {
       (window.navigator as unknown as { standalone?: boolean }).standalone === true;
     setIsInstalled(isStandalone);
 
-    // 2. Detect iOS
+    // 2. Detect iOS & Android
     const userAgent = window.navigator.userAgent.toLowerCase();
     const isIOSDevice = /iphone|ipad|ipod/.test(userAgent) && !(window as unknown as { MSStream?: unknown }).MSStream;
+    const isAndroidDevice = /android/.test(userAgent);
     setIsIOS(isIOSDevice);
+    setIsAndroid(isAndroidDevice);
 
     // 3. Selective manifest and service worker injection
     const existingManifest = document.getElementById('pwa-manifest-link');
@@ -93,6 +96,7 @@ export function usePWASelective(enabled: boolean) {
     isInstallable: !!deferredPrompt,
     isInstalled,
     isIOS,
+    isAndroid,
     install,
   };
 }
@@ -102,26 +106,65 @@ interface PWAInstallBannerProps {
 }
 
 export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({ enabled }) => {
-  const { isInstallable, isInstalled, isIOS, install } = usePWASelective(enabled);
+  const { isInstallable, isInstalled, isIOS, isAndroid, install } = usePWASelective(enabled);
   const [dismissed, setDismissed] = useState(false);
   const [showIOSModal, setShowIOSModal] = useState(false);
+  const [showAndroidModal, setShowAndroidModal] = useState(false);
 
   // If not enabled (e.g. public customer store), or already installed, or dismissed by user
   if (!enabled || isInstalled || dismissed) {
     return null;
   }
 
-  // Only show if browser supports install prompt OR if it's iOS Safari
-  if (!isInstallable && !isIOS) {
+  // Only show if browser supports install prompt OR on mobile (Android or iOS)
+  if (!isInstallable && !isIOS && !isAndroid) {
     return null;
   }
 
   const handleInstallClick = () => {
     if (isInstallable) {
+      // Native one-click install available via beforeinstallprompt
       install();
+    } else if (isAndroid) {
+      // beforeinstallprompt not available on Android: show browser-adapted instructions
+      setShowAndroidModal(true);
     } else if (isIOS) {
+      // iOS Safari: show Share -> Add to Home Screen instructions
       setShowIOSModal(true);
     }
+  };
+
+  const renderButtonContent = () => {
+    if (isInstallable) {
+      return (
+        <>
+          <Download className="w-3.5 h-3.5" />
+          <span>Installer l'application sur mon téléphone</span>
+        </>
+      );
+    }
+    if (isAndroid) {
+      return (
+        <>
+          <Smartphone className="w-3.5 h-3.5" />
+          <span>Installer sur Android</span>
+        </>
+      );
+    }
+    if (isIOS) {
+      return (
+        <>
+          <Share className="w-3.5 h-3.5" />
+          <span>Installer sur iPhone / iPad</span>
+        </>
+      );
+    }
+    return (
+      <>
+        <Download className="w-3.5 h-3.5" />
+        <span>Installer l'application</span>
+      </>
+    );
   };
 
   return (
@@ -151,13 +194,12 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({ enabled }) =
               onClick={handleInstallClick}
               className="flex items-center gap-1.5 bg-[#25D366] hover:bg-[#20ba59] active:scale-95 text-slate-950 font-extrabold px-3 py-1.5 rounded-lg text-xs shadow-sm transition-all cursor-pointer whitespace-nowrap"
             >
-              <Download className="w-3.5 h-3.5" />
-              <span>Installer l'application sur mon téléphone</span>
+              {renderButtonContent()}
             </button>
 
             <button
               onClick={() => setDismissed(true)}
-              className="text-slate-400 hover:text-white p-1 rounded-md transition-colors"
+              className="text-slate-400 hover:text-white p-1 rounded-md transition-colors cursor-pointer"
               title="Fermer"
             >
               <X className="w-4 h-4" />
@@ -166,9 +208,75 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({ enabled }) =
         </div>
       </div>
 
+      {/* Android Installation Guide Modal (when beforeinstallprompt is not available) */}
+      {showAndroidModal && (
+        <div 
+          id="pwa-android-modal"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs"
+          onClick={() => setShowAndroidModal(false)}
+        >
+          <div 
+            className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 text-slate-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-[#25D366] text-slate-950 flex items-center justify-center font-bold">
+                  <Smartphone className="w-4 h-4" />
+                </div>
+                <h3 className="text-sm font-bold">Installer sur Android</h3>
+              </div>
+              <button 
+                id="btn-close-android-modal-x"
+                onClick={() => setShowAndroidModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="py-4 space-y-3.5 text-xs text-slate-600">
+              <p className="font-medium text-slate-800">
+                Pour ajouter <strong>WhatsApp Commercial AI</strong> à l'écran d'accueil de votre téléphone Android :
+              </p>
+              
+              <div className="flex items-start gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-800 font-bold flex items-center justify-center shrink-0 text-[11px]">1</span>
+                <div>
+                  Ouvrez le menu de votre navigateur (les <strong>trois points verticaux ⋮</strong> en haut à droite sur Chrome, ou le menu <strong>☰</strong> sur Samsung Internet).
+                </div>
+              </div>
+
+              <div className="flex items-start gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-800 font-bold flex items-center justify-center shrink-0 text-[11px]">2</span>
+                <div>
+                  Appuyez sur <strong>« Installer l'application »</strong> ou <strong>« Ajouter à l'écran d'accueil »</strong>.
+                </div>
+              </div>
+
+              <div className="flex items-start gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-800 font-bold flex items-center justify-center shrink-0 text-[11px]">3</span>
+                <div>
+                  Confirmez en appuyant sur <strong>Installer</strong> ou <strong>Ajouter</strong>. L'icône apparaîtra sur votre écran d'accueil avec un accès direct et rapide.
+                </div>
+              </div>
+            </div>
+
+            <button
+              id="btn-close-android-modal"
+              onClick={() => setShowAndroidModal(false)}
+              className="w-full bg-slate-900 text-white font-bold py-2.5 rounded-xl text-xs hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              Compris
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* iOS Installation Guide Modal */}
       {showIOSModal && (
         <div 
+          id="pwa-ios-modal"
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs"
           onClick={() => setShowIOSModal(false)}
         >
@@ -178,14 +286,15 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({ enabled }) =
           >
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-[#25D366] text-slate-950 flex items-center justify-center">
+                <div className="w-8 h-8 rounded-xl bg-[#25D366] text-slate-950 flex items-center justify-center font-bold">
                   <Smartphone className="w-4 h-4" />
                 </div>
                 <h3 className="text-sm font-bold">Installer sur iPhone / iPad</h3>
               </div>
               <button 
+                id="btn-close-ios-modal-x"
                 onClick={() => setShowIOSModal(false)}
-                className="text-slate-400 hover:text-slate-600 p-1"
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -219,8 +328,9 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({ enabled }) =
             </div>
 
             <button
+              id="btn-close-ios-modal"
               onClick={() => setShowIOSModal(false)}
-              className="w-full bg-slate-900 text-white font-bold py-2.5 rounded-xl text-xs hover:bg-slate-800 transition-colors"
+              className="w-full bg-slate-900 text-white font-bold py-2.5 rounded-xl text-xs hover:bg-slate-800 transition-colors cursor-pointer"
             >
               Compris
             </button>

@@ -8,7 +8,7 @@ import {
   PublicStoreProfile 
 } from './types';
 import { ApiService, initSeedData, DEFAULT_CONFIG } from './services/api';
-import { AuthService } from './services/authService';
+import { AuthService, ADMIN_EMAIL } from './services/authService';
 import { auth, onAuthStateChanged } from './firebase';
 import { ToastProvider, useToast } from './components/Toast';
 import { TrialBanner } from './components/TrialBanner';
@@ -96,6 +96,24 @@ function MainApp() {
   const [storeLoading, setStoreLoading] = useState<boolean>(initialRoute.mode === 'store');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // Track Firebase Auth user for authorized admin checking
+  const [currentAuthUser, setCurrentAuthUser] = useState(() => auth.currentUser);
+  const isAuthorizedAdmin = Boolean(
+    currentAuthUser &&
+    currentAuthUser.email &&
+    currentAuthUser.email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase()
+  );
+
+  // Clean up PWA manifest link whenever in public catalog mode
+  useEffect(() => {
+    if (viewMode === 'store') {
+      const existingManifest = document.getElementById('pwa-manifest-link');
+      if (existingManifest) {
+        existingManifest.remove();
+      }
+    }
+  }, [viewMode]);
+
   // Set initial history state on mount
   useEffect(() => {
     if (!window.history.state) {
@@ -138,9 +156,9 @@ function MainApp() {
       }
 
       // 4. For public visitors without merchant credentials:
-      // Never switch to 'app' (which would display the login/signup screen)
+      // Never switch to 'app' (which would display the login/signup screen or PWA prompts)
       if (!activeVendeur) {
-        if (publicStoreVendeur) {
+        if (viewMode !== 'store') {
           setViewMode('store');
         }
         return;
@@ -250,6 +268,7 @@ function MainApp() {
     // 3. Real Firebase Auth state listener registered IMMEDIATELY
     const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
       if (!isSubscribed) return;
+      setCurrentAuthUser(firebaseUser);
 
       if (firebaseUser) {
         try {
@@ -578,7 +597,7 @@ function MainApp() {
   if (viewMode === 'admin') {
     return (
       <>
-        <PWAInstallBanner enabled={true} />
+        {isAuthorizedAdmin && <PWAInstallBanner enabled={true} />}
         <AdminPortal
           config={config}
           onUpdateConfig={handleUpdateConfig}
@@ -662,7 +681,7 @@ function MainApp() {
   return (
     <div id="merchant-app" className="min-h-screen bg-slate-50 text-slate-900 flex flex-col pb-24 md:pb-10 font-sans">
       {/* Selective PWA Installation Banner (Merchant only, never in Public Store) */}
-      <PWAInstallBanner enabled={true} />
+      <PWAInstallBanner enabled={Boolean(activeVendeur)} />
 
       {/* Dynamic Trial Banner */}
       <TrialBanner
