@@ -21,6 +21,54 @@
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="icon" type="image/png" sizes="192x192" href="/pwa-192x192.png" />
 
+    <!-- PWA Early Prompt Capture & Registration (Executes synchronously before bundle) -->
+    <script>
+      (function() {
+        window.__PWA_PROMPT__ = null;
+        window.__PWA_PROMPT_TIMESTAMP__ = null;
+        window.__PWA_PROMPT_LISTENERS__ = [];
+
+        window.addEventListener('beforeinstallprompt', function(e) {
+          e.preventDefault();
+          window.__PWA_PROMPT__ = e;
+          window.__PWA_PROMPT_TIMESTAMP__ = Date.now();
+          console.info('[PWA-Early] beforeinstallprompt captured at', window.__PWA_PROMPT_TIMESTAMP__);
+          if (window.__PWA_PROMPT_LISTENERS__) {
+            window.__PWA_PROMPT_LISTENERS__.forEach(function(fn) {
+              try { fn(e); } catch (err) {}
+            });
+          }
+          try {
+            window.dispatchEvent(new CustomEvent('pwa:prompt-ready', { detail: e }));
+          } catch (err) {}
+        });
+
+        window.addEventListener('appinstalled', function() {
+          window.__PWA_PROMPT__ = null;
+          console.info('[PWA-Early] appinstalled event fired');
+          try {
+            window.dispatchEvent(new CustomEvent('pwa:installed'));
+          } catch (err) {}
+        });
+
+        // Fast Service Worker registration in production on Vercel
+        var isDevOrPreview =
+          location.hostname.indexOf('run.app') !== -1 ||
+          location.hostname === 'localhost' ||
+          location.hostname === '127.0.0.1';
+
+        if (!isDevOrPreview && 'serviceWorker' in navigator) {
+          navigator.serviceWorker.register('/sw.js', { scope: '/' })
+            .then(function(reg) {
+              console.info('[PWA-Early] Service worker registered with scope:', reg.scope);
+            })
+            .catch(function(err) {
+              console.warn('[PWA-Early] SW register warning:', err);
+            });
+        }
+      })();
+    </script>
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">

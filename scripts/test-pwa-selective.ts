@@ -135,12 +135,43 @@ assert(
 );
 console.log('✅ [PASS] 15. index.html intègre le manifest et theme-color indispensables pour Android Chromium');
 
-// K. Intégrité des règles Firestore et Firebase
+// K. Modal et panneau de diagnostics PWA explicite
+assert(
+  pwaContent.includes('pwa-diagnostics-modal') &&
+  pwaContent.includes('Diagnostic Installation Android PWA') &&
+  pwaContent.includes('btn-pwa-diagnostics'),
+  'ÉCHEC: Un modal de diagnostic PWA doit être présent pour inspecter l\'état réel du prompt, SW et manifest'
+);
+console.log('✅ [PASS] 16. Modal et bouton de diagnostics techniques PWA présents');
+
+// L. Vérification de la présence physique des icônes déclarées dans manifest.json
+const manifestPath = path.resolve('./public/manifest.json');
+const manifestData = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+assert(manifestData.name && manifestData.short_name, 'ÉCHEC: manifest.json doit comporter name et short_name');
+assert(manifestData.display === 'standalone', 'ÉCHEC: manifest.json doit spécifier display: standalone');
+assert(manifestData.start_url && manifestData.scope, 'ÉCHEC: manifest.json doit spécifier start_url et scope');
+
+for (const icon of manifestData.icons) {
+  const iconFilePath = path.resolve('./public', icon.src.replace(/^\//, ''));
+  assert(fs.existsSync(iconFilePath), `ÉCHEC: L'icône ${icon.src} déclarée dans manifest.json est introuvable sur le disque`);
+}
+console.log('✅ [PASS] 17. Toutes les icônes du manifest (192, 512, maskable) existent physiquement sur le disque');
+
+// M. Vérification des headers et règles de rewrite de vercel.json
+const vercelConfig = JSON.parse(fs.readFileSync(path.resolve('./vercel.json'), 'utf-8'));
+assert(Array.isArray(vercelConfig.headers), 'ÉCHEC: vercel.json doit définir des headers pour sw.js et manifest.json');
+const swHeader = vercelConfig.headers.find((h: any) => h.source === '/sw.js');
+assert(swHeader, 'ÉCHEC: Header /sw.js absent de vercel.json');
+const manifestHeader = vercelConfig.headers.find((h: any) => h.source === '/manifest.json');
+assert(manifestHeader, 'ÉCHEC: Header /manifest.json absent de vercel.json');
+console.log('✅ [PASS] 18. vercel.json configure les en-têtes MIME stricts pour /sw.js et /manifest.json');
+
+// N. Intégrité des règles Firestore et Firebase
 const rulesContent = fs.readFileSync(path.resolve('./firestore.rules'), 'utf-8');
 assert(
   rulesContent.includes('hasSensitiveSubscriptionFields'),
   'ÉCHEC: Les règles de sécurité des abonnements doivent être intactes'
 );
-console.log('✅ [PASS] 16. Intégrité absolue des règles de sécurité Firestore et abonnements conservée');
+console.log('✅ [PASS] 19. Intégrité absolue des règles de sécurité Firestore et abonnements conservée');
 
-console.log('🎉 TOUS LES 16 TESTS PWA SÉLECTIF ET SÉCURITÉ ONT RÉUSSI !');
+console.log('🎉 TOUS LES 19 TESTS PWA SÉLECTIF, DIAGNOSTICS ET SÉCURITÉ ONT RÉUSSI !');

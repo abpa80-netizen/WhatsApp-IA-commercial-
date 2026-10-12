@@ -2,6 +2,7 @@
 const CACHE_NAME = 'wca-vendeur-v1';
 const STATIC_ASSETS = [
   '/',
+  '/?source=pwa',
   '/manifest.json',
   '/pwa-192x192.png',
   '/pwa-512x512.png',
