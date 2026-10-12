@@ -5,7 +5,8 @@ import {
   createUserWithEmailAndPassword, 
   signOut, 
   signInWithPopup, 
-  googleProvider, 
+  googleProvider,
+  sendPasswordResetEmail,
   FirebaseUser 
 } from '../firebase';
 import { FirestoreService, DEFAULT_GLOBAL_SETTINGS } from './firestoreService';
@@ -341,13 +342,25 @@ export const AuthService = {
 
     let userCred;
     try {
-      userCred = await signInWithEmailAndPassword(auth, 'foosco80@gmail.com', password.trim());
+      userCred = await signInWithEmailAndPassword(auth, ADMIN_EMAIL, password.trim());
     } catch (err: any) {
-      if (err?.code === 'auth/wrong-password' || err?.code === 'auth/invalid-credential') {
+      if (err?.code === 'auth/wrong-password') {
         throw new Error('Mot de passe administrateur incorrect.');
       }
+      if (err?.code === 'auth/operation-not-allowed') {
+        throw new Error(
+          `Le fournisseur d’accès Email/Mot de passe n’est pas activé dans votre console Firebase (Authentication > Sign-in method). Utilisez « Se connecter avec Google » en priorité ou activez le fournisseur.`
+        );
+      }
+      if (err?.code === 'auth/invalid-credential') {
+        throw new Error(
+          `Identifiant ou mot de passe invalide pour ${ADMIN_EMAIL}. Si vous n'avez pas encore défini de mot de passe, utilisez « Mot de passe oublié ? » pour en créer un par email, ou connectez-vous avec Google.`
+        );
+      }
       if (err?.code === 'auth/user-not-found') {
-        throw new Error('Aucun compte administrateur trouvé pour foosco80@gmail.com. Vous pouvez utiliser la connexion Google autorisée.');
+        throw new Error(
+          `Aucun compte avec mot de passe trouvé pour ${ADMIN_EMAIL}. Si vous utilisez Google, cliquez sur « Se connecter avec Google ». Pour activer un mot de passe, utilisez « Mot de passe oublié ? » ci-dessous.`
+        );
       }
       if (err?.code === 'auth/too-many-requests') {
         throw new Error('Trop de tentatives infructueuses. Veuillez patienter quelques minutes.');
@@ -356,12 +369,49 @@ export const AuthService = {
     }
 
     const user = userCred.user;
-    if (user.email?.trim().toLowerCase() !== 'foosco80@gmail.com') {
+    if (user.email?.trim().toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
       await signOut(auth);
-      throw new Error('Accès refusé : Seul le compte foosco80@gmail.com est autorisé.');
+      throw new Error(`Accès refusé : Seul le compte ${ADMIN_EMAIL} est autorisé.`);
     }
 
     return user;
+  },
+
+  /**
+   * Request password configuration or reset email for the administrator
+   * Sends secure Firebase Authentication password reset email directly to foosco80@gmail.com
+   * NEVER stores or transmits plaintext passwords in Firestore.
+   */
+  async sendAdminPasswordReset(targetEmail: string = ADMIN_EMAIL): Promise<{ success: boolean; message: string }> {
+    const cleanEmail = (targetEmail !== undefined && targetEmail !== null ? targetEmail : ADMIN_EMAIL).trim().toLowerCase();
+    
+    // Strict admin privilege guard: only foosco80@gmail.com can receive admin reset links
+    if (!cleanEmail || cleanEmail !== ADMIN_EMAIL.toLowerCase()) {
+      throw new Error(`Action non autorisée : La réinitialisation administrateur est strictement réservée à ${ADMIN_EMAIL}.`);
+    }
+
+    try {
+      await sendPasswordResetEmail(auth, cleanEmail);
+      return {
+        success: true,
+        message: `Un lien de réinitialisation/création de mot de passe a été envoyé par Firebase à ${cleanEmail}. Veuillez vérifier votre boîte de réception (et spams).`,
+      };
+    } catch (err: any) {
+      if (err?.code === 'auth/user-not-found') {
+        throw new Error(
+          `Aucun compte n'a encore été créé avec mot de passe pour ${cleanEmail}. Si votre compte utilise uniquement Google Sign-In, vous pouvez continuer à utiliser « Se connecter avec Google » ou créer le compte Email/Password dans la console Firebase.`
+        );
+      }
+      if (err?.code === 'auth/operation-not-allowed') {
+        throw new Error(
+          `Le fournisseur Email/Mot de passe n'est pas activé dans votre console Firebase (Authentication > Sign-in method). Veuillez l'activer ou utiliser la connexion Google.`
+        );
+      }
+      if (err?.code === 'auth/too-many-requests') {
+        throw new Error('Trop de demandes récentes. Veuillez patienter quelques minutes avant de renouveler la demande.');
+      }
+      throw new Error(err?.message || 'Erreur lors de l’envoi de l’email de réinitialisation.');
+    }
   },
 
   /**

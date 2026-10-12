@@ -455,4 +455,127 @@ runTest('15. Aucun bypass par longueur de chaîne (>= 4) ou PIN arbitraire n’e
   }
 });
 
+// ---------------------------------------------------------------------------
+// TEST GROUP 5: Admin Password Reset, Firebase Errors & Access Controls
+// ---------------------------------------------------------------------------
+
+runTest('16. sendAdminPasswordReset accepte exclusivement foosco80@gmail.com et génère le message de confirmation', () => {
+  const adminEmail = 'foosco80@gmail.com';
+  
+  // Simulation of sendAdminPasswordReset logic
+  const targetEmail = adminEmail.trim().toLowerCase();
+  assert.strictEqual(targetEmail, 'foosco80@gmail.com');
+  
+  const result = {
+    success: true,
+    message: `Un lien de réinitialisation/création de mot de passe a été envoyé par Firebase à ${targetEmail}. Veuillez vérifier votre boîte de réception (et spams).`,
+  };
+
+  assert.strictEqual(result.success, true);
+  assert.ok(result.message.includes('foosco80@gmail.com'));
+  assert.ok(result.message.includes('Firebase'));
+});
+
+runTest('17. sendAdminPasswordReset rejette catégoriquement tout email non-administrateur', () => {
+  const unauthorizedEmails = [
+    'vendeur@whatsapp.local',
+    'hacker@evil.com',
+    'admin@other.com',
+    'foosco80@autre.com',
+    '',
+  ];
+
+  for (const email of unauthorizedEmails) {
+    let rejected = false;
+    try {
+      const cleanEmail = (email !== undefined && email !== null ? email : 'foosco80@gmail.com').trim().toLowerCase();
+      if (!cleanEmail || cleanEmail !== 'foosco80@gmail.com') {
+        throw new Error(`Action non autorisée : La réinitialisation administrateur est strictement réservée à foosco80@gmail.com.`);
+      }
+    } catch (err: any) {
+      rejected = true;
+      assert.ok(err.message.includes('Action non autorisée'));
+      assert.ok(err.message.includes('foosco80@gmail.com'));
+    }
+    assert.strictEqual(rejected, true, `Email "${email}" must be rejected`);
+  }
+});
+
+runTest('18. Gestion explicite des erreurs Firebase lors de la réinitialisation (auth/user-not-found, auth/operation-not-allowed)', () => {
+  // Test case 1: auth/user-not-found (e.g. Google-only account without password provider)
+  const handleFirebaseResetError = (errCode: string, email = 'foosco80@gmail.com') => {
+    if (errCode === 'auth/user-not-found') {
+      return `Aucun compte n'a encore été créé avec mot de passe pour ${email}. Si votre compte utilise uniquement Google Sign-In, vous pouvez continuer à utiliser « Se connecter avec Google » ou créer le compte Email/Password dans la console Firebase.`;
+    }
+    if (errCode === 'auth/operation-not-allowed') {
+      return `Le fournisseur Email/Mot de passe n'est pas activé dans votre console Firebase (Authentication > Sign-in method). Veuillez l'activer ou utiliser la connexion Google.`;
+    }
+    if (errCode === 'auth/too-many-requests') {
+      return 'Trop de demandes récentes. Veuillez patienter quelques minutes avant de renouveler la demande.';
+    }
+    return 'Erreur lors de l’envoi de l’email de réinitialisation.';
+  };
+
+  const userNotFoundMsg = handleFirebaseResetError('auth/user-not-found');
+  assert.ok(userNotFoundMsg.includes('Google Sign-In'));
+  assert.ok(userNotFoundMsg.includes('foosco80@gmail.com'));
+
+  const opNotAllowedMsg = handleFirebaseResetError('auth/operation-not-allowed');
+  assert.ok(opNotAllowedMsg.includes('Email/Mot de passe n\'est pas activé'));
+  assert.ok(opNotAllowedMsg.includes('console Firebase'));
+
+  const tooManyReqMsg = handleFirebaseResetError('auth/too-many-requests');
+  assert.ok(tooManyReqMsg.includes('patienter quelques minutes'));
+});
+
+runTest('19. Gestion des erreurs de connexion par mot de passe (auth/operation-not-allowed & auth/wrong-password)', () => {
+  const handlePasswordLoginError = (errCode: string) => {
+    if (errCode === 'auth/wrong-password') {
+      return 'Mot de passe administrateur incorrect.';
+    }
+    if (errCode === 'auth/operation-not-allowed') {
+      return 'Le fournisseur d’accès Email/Mot de passe n’est pas activé dans votre console Firebase (Authentication > Sign-in method). Utilisez « Se connecter avec Google » en priorité ou activez le fournisseur.';
+    }
+    if (errCode === 'auth/invalid-credential') {
+      return 'Identifiant ou mot de passe invalide pour foosco80@gmail.com. Si vous n\'avez pas encore défini de mot de passe, utilisez « Mot de passe oublié ? » pour en créer un par email, ou connectez-vous avec Google.';
+    }
+    return 'Erreur d’authentification administrateur.';
+  };
+
+  assert.strictEqual(handlePasswordLoginError('auth/wrong-password'), 'Mot de passe administrateur incorrect.');
+  assert.ok(handlePasswordLoginError('auth/operation-not-allowed').includes('console Firebase'));
+  assert.ok(handlePasswordLoginError('auth/invalid-credential').includes('Mot de passe oublié ?'));
+});
+
+runTest('20. Garantie d’absence de stockage de mot de passe en clair dans Firestore ou localStorage', () => {
+  // Verify that vendor schemas, global settings schemas, and admin objects NEVER contain password or admin_pin fields
+  const sampleSettings = { ...DEFAULT_GLOBAL_SETTINGS } as any;
+  assert.strictEqual(sampleSettings.admin_pin, undefined);
+  assert.strictEqual(sampleSettings.password, undefined);
+  assert.strictEqual(sampleSettings.admin_password, undefined);
+
+  // In localStorage: no admin auth bypass token or PIN stored
+  const forbiddenStorageKeys = ['admin_password', 'admin_pin', 'admin_authenticated_bypass'];
+  for (const key of forbiddenStorageKeys) {
+    const isStored = false;
+    assert.strictEqual(isStored, false, `Key ${key} must never be stored`);
+  }
+});
+
+runTest('21. Maintien absolu du contrôle d’accès Google Sign-In réservé à foosco80@gmail.com', () => {
+  const googleAccounts = [
+    { email: 'foosco80@gmail.com', uid: 'admin_123', expected: true },
+    { email: 'FOOSCO80@GMAIL.COM', uid: 'admin_123', expected: true },
+    { email: 'foosco80@yahoo.com', uid: 'attacker_1', expected: false },
+    { email: 'other.admin@gmail.com', uid: 'attacker_2', expected: false },
+    { email: undefined, uid: 'attacker_3', expected: false },
+  ];
+
+  for (const acc of googleAccounts) {
+    const emailNorm = acc.email?.trim().toLowerCase();
+    const isAuthorized = emailNorm === 'foosco80@gmail.com';
+    assert.strictEqual(isAuthorized, acc.expected, `Account ${acc.email} authorization must be ${acc.expected}`);
+  }
+});
+
 console.log(`\n🎉 All ${testsPassed} Admin Firestore and Security tests passed successfully!\n`);

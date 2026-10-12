@@ -26,7 +26,9 @@ import {
   CheckCircle2,
   Share2,
   Link as LinkIcon,
-  AlertCircle
+  AlertCircle,
+  Mail,
+  Info
 } from 'lucide-react';
 import { ApiService } from '../services/api';
 import { useToast } from './Toast';
@@ -63,6 +65,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [signingInPassword, setSigningInPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
+
+  // Admin password reset states
+  const [sendingResetEmail, setSendingResetEmail] = useState(false);
+  const [resetFeedback, setResetFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [sendingInAdminReset, setSendingInAdminReset] = useState(false);
+  const [inAdminResetFeedback, setInAdminResetFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const [adminData, setAdminData] = useState<AdminData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -166,6 +174,41 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       showToast(msg, 'error');
     } finally {
       setSigningInPassword(false);
+    }
+  };
+
+  const handleAdminForgotPassword = async () => {
+    setResetFeedback(null);
+    setAuthError(null);
+    setSendingResetEmail(true);
+    try {
+      const res = await AuthService.sendAdminPasswordReset(ADMIN_EMAIL);
+      setResetFeedback({ type: 'success', message: res.message });
+      showToast('Lien de réinitialisation Firebase envoyé !', 'success');
+    } catch (err: any) {
+      console.error('[Admin Forgot Password Error]:', err);
+      const msg = err?.message || 'Erreur lors de l’envoi de l’email de réinitialisation.';
+      setResetFeedback({ type: 'error', message: msg });
+      showToast(msg, 'error');
+    } finally {
+      setSendingResetEmail(false);
+    }
+  };
+
+  const handleInAdminSendPasswordReset = async () => {
+    setInAdminResetFeedback(null);
+    setSendingInAdminReset(true);
+    try {
+      const res = await AuthService.sendAdminPasswordReset(ADMIN_EMAIL);
+      setInAdminResetFeedback({ type: 'success', message: res.message });
+      showToast('Lien officiel Firebase envoyé à votre adresse email !', 'success');
+    } catch (err: any) {
+      console.error('[In-Admin Password Reset Error]:', err);
+      const msg = err?.message || 'Erreur lors de l’envoi de l’email de réinitialisation.';
+      setInAdminResetFeedback({ type: 'error', message: msg });
+      showToast(msg, 'error');
+    } finally {
+      setSendingInAdminReset(false);
     }
   };
 
@@ -311,7 +354,48 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     required
                   />
                 </div>
+                <div className="flex items-center justify-between mt-2">
+                  <button
+                    id="btn-admin-forgot-password"
+                    type="button"
+                    onClick={handleAdminForgotPassword}
+                    disabled={sendingResetEmail || signingInPassword || signingInGoogle}
+                    className="text-[11px] text-emerald-400 hover:text-emerald-300 font-medium transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {sendingResetEmail ? (
+                      <>
+                        <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Envoi du lien Firebase...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Mail className="w-3.5 h-3.5" />
+                        <span>Mot de passe oublié ?</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
+
+              {resetFeedback && (
+                <div className={`rounded-xl p-3 text-xs flex items-start gap-2.5 ${
+                  resetFeedback.type === 'success' 
+                    ? 'bg-emerald-950/80 border border-emerald-700/80 text-emerald-300' 
+                    : 'bg-rose-950/80 border border-rose-800/80 text-rose-300'
+                }`}>
+                  {resetFeedback.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  )}
+                  <div>
+                    <span className="font-bold block">
+                      {resetFeedback.type === 'success' ? 'Email de réinitialisation envoyé' : 'Information Firebase'}
+                    </span>
+                    <span className="text-[11px] leading-relaxed block mt-0.5">{resetFeedback.message}</span>
+                  </div>
+                </div>
+              )}
 
               <button
                 id="btn-admin-password-login"
@@ -327,6 +411,16 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 <span>Se connecter à l’Administration</span>
               </button>
             </form>
+
+            <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3 text-[11px] text-slate-400 space-y-1">
+              <div className="flex items-center gap-1.5 text-slate-300 font-semibold">
+                <Info className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span>Précision d’authentification</span>
+              </div>
+              <p className="leading-relaxed">
+                L’accès par mot de passe utilise le compte Firebase officiel <strong className="text-emerald-400 font-mono">{ADMIN_EMAIL}</strong>. Si vous vous connectez habituellement via Google, utilisez le bouton Google ci-dessus. Si vous n'avez pas encore défini de mot de passe, cliquez sur « Mot de passe oublié ? » pour recevoir un lien officiel Firebase par email.
+              </p>
+            </div>
           </div>
 
           <div className="pt-2 border-t border-slate-800 text-center">
@@ -871,25 +965,99 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </div>
           </form>
 
-          {/* Dedicated Admin Profile & Security Information */}
-          <div className="mt-6 pt-5 border-t border-slate-700/80">
-            <div className="flex items-center gap-2 mb-3">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                Sécurité & Droits d’Accès Super Administrateur
-              </h3>
+          {/* Dedicated Account Security & Password Management Section ("Sécurité du compte") */}
+          <div id="admin-account-security-section" className="mt-6 pt-5 border-t border-slate-700/80 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                  Sécurité du Compte & Mot de Passe Administrateur
+                </h3>
+              </div>
+              <span className="text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2.5 py-0.5 rounded-full uppercase tracking-wider w-fit">
+                Accès Super Admin Protégé
+              </span>
             </div>
 
-            <div className="bg-slate-900/80 p-4 rounded-2xl border border-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-700 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
               <div className="space-y-1">
-                <span className="text-slate-400 text-[11px] block">Compte Administrateur Firebase autorisé :</span>
-                <span className="font-mono text-emerald-300 font-bold">{ADMIN_EMAIL}</span>
-                <span className="block text-[10px] text-slate-500">Rôle : Super Admin (Règles Firestore isAdmin() = true)</span>
+                <span className="text-slate-400 text-[11px] block">Compte Firebase autorisé :</span>
+                <span className="font-mono text-emerald-300 font-bold break-all">{ADMIN_EMAIL}</span>
+                <span className="block text-[10px] text-slate-500">UID : {currentUser?.uid || 'N/A'}</span>
               </div>
               <div className="space-y-1">
-                <span className="text-slate-400 text-[11px] block">Politique de sécurité & Chiffrement :</span>
-                <span className="text-slate-300">Authentification serveur Firebase native</span>
-                <span className="block text-[10px] text-slate-500">Aucun PIN ni mot de passe stocké en clair. Contrôle strict de users.list & settings.write.</span>
+                <span className="text-slate-400 text-[11px] block">Méthode de connexion active :</span>
+                <span className="text-slate-300 font-medium">
+                  {currentUser?.providerData && currentUser.providerData.length > 0 
+                    ? currentUser.providerData.map(p => p.providerId === 'google.com' ? 'Google Sign-In' : p.providerId === 'password' ? 'Email/Mot de passe' : p.providerId).join(', ')
+                    : 'Google Sign-In / Firebase'}
+                </span>
+                <span className="block text-[10px] text-slate-500">Règles Firestore : isAdmin() = true</span>
+              </div>
+              <div className="space-y-1">
+                <span className="text-slate-400 text-[11px] block">Stockage des identifiants :</span>
+                <span className="text-emerald-400 font-medium">Zéro mot de passe en base de données</span>
+                <span className="block text-[10px] text-slate-500">Protection native Firebase Authentication</span>
+              </div>
+            </div>
+
+            {/* Email Password Reset Action */}
+            <div className="bg-slate-900/60 p-4 sm:p-5 rounded-2xl border border-emerald-500/20 space-y-3">
+              <div className="flex items-start gap-3">
+                <KeyRound className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Réinitialiser ou Définir le Mot de Passe Administrateur
+                  </h4>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Si vous ne connaissez pas le mot de passe actuel ou souhaitez le mettre à jour, vous pouvez demander à Firebase d’envoyer un lien de réinitialisation sécurisé à l’adresse officielle <strong className="text-emerald-400 font-mono">{ADMIN_EMAIL}</strong>. Aucun mot de passe n’est enregistré dans Firestore ou dans le code source.
+                  </p>
+                </div>
+              </div>
+
+              {inAdminResetFeedback && (
+                <div className={`rounded-xl p-3 text-xs flex items-start gap-2.5 ${
+                  inAdminResetFeedback.type === 'success' 
+                    ? 'bg-emerald-950/80 border border-emerald-700/80 text-emerald-300' 
+                    : 'bg-rose-950/80 border border-rose-800/80 text-rose-300'
+                }`}>
+                  {inAdminResetFeedback.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  )}
+                  <div>
+                    <span className="font-bold block">
+                      {inAdminResetFeedback.type === 'success' ? 'Email de réinitialisation envoyé' : 'Information Firebase'}
+                    </span>
+                    <span className="text-[11px] leading-relaxed block mt-0.5">{inAdminResetFeedback.message}</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                <span className="text-[11px] text-slate-500">
+                  Lien généré et expédié exclusivement à {ADMIN_EMAIL}
+                </span>
+                <button
+                  id="btn-in-admin-reset-password"
+                  type="button"
+                  onClick={handleInAdminSendPasswordReset}
+                  disabled={sendingInAdminReset}
+                  className="flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#20ba59] active:scale-98 text-slate-950 font-bold px-4 py-2.5 rounded-xl text-xs shadow-md transition-all cursor-pointer disabled:opacity-50 shrink-0"
+                >
+                  {sendingInAdminReset ? (
+                    <>
+                      <RotateCw className="w-4 h-4 animate-spin text-slate-950" />
+                      <span>Envoi en cours...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Mail className="w-4 h-4" />
+                      <span>Envoyer le lien de réinitialisation par email</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
           </div>
