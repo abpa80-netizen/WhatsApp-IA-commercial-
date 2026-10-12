@@ -45,7 +45,14 @@ export function usePWASelective(enabled: boolean) {
     }
 
     // Register Service Worker in Merchant / Admin mode
-    if ('serviceWorker' in navigator) {
+    // Note: Skipped in AI Studio preview / dev mode where /sw.js fails due to proxy redirect, preserved in production on Vercel.
+    const isAiStudioPreview =
+      import.meta.env.DEV ||
+      window.location.hostname.includes('run.app') ||
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1';
+
+    if ('serviceWorker' in navigator && !isAiStudioPreview) {
       navigator.serviceWorker.register('/sw.js').catch((err) => {
         console.warn('[SW Registration error]', err);
       });

@@ -168,33 +168,53 @@ export const FirestoreService = {
     const docPath = `users/${uid}`;
     try {
       const now = new Date().toISOString();
-      const phone = data.whatsappNumber || data.phone || '';
-      const phoneNormalized = phone.replace(/\D/g, '');
+      const phone = data.whatsappNumber || data.phone;
+      const phoneNormalized = phone ? phone.replace(/\D/g, '') : undefined;
 
       const payload: Record<string, any> = {
         uid: uid,
-        whatsappNumber: phone,
-        phoneNormalized: phoneNormalized,
-        role: data.role || 'seller',
-        status: data.status || 'Actif',
-        plan: data.plan || (data.status === 'VIP' ? 'VIP' : 'Essai'),
-        publicSlug: data.publicSlug || uid,
-        name: data.name || `Boutique ${phoneNormalized.slice(-4)}`,
-        slogan: data.slogan || 'Vente directe sur WhatsApp',
-        location: data.location || 'Casablanca, Maroc',
-        logo: data.logo || 'https://images.unsplash.com/photo-1472851294608-062f824d29cc?auto=format&fit=crop&w=400&q=80',
-        currency: data.currency || (phone.startsWith('+212') ? 'MAD' : 'CFA'),
         updatedAt: now,
       };
+
+      if (phone !== undefined) payload.whatsappNumber = phone;
+      if (phoneNormalized !== undefined) payload.phoneNormalized = phoneNormalized;
+      if (data.name !== undefined) payload.name = data.name;
+      if (data.slogan !== undefined) payload.slogan = data.slogan;
+      if (data.location !== undefined) payload.location = data.location;
+      if (data.logo !== undefined) payload.logo = data.logo;
+      if (data.currency !== undefined) payload.currency = data.currency;
+      if (data.publicSlug !== undefined) payload.publicSlug = data.publicSlug;
+
+      // Sensitive subscription & privilege fields:
+      // Only the authorized admin (foosco80@gmail.com) can update subscriptions or roles.
+      // During initial registration (when data.createdAt is supplied), safe baseline trial values are set.
+      const isSuperAdmin = auth.currentUser?.email?.trim().toLowerCase() === 'foosco80@gmail.com';
+      const isInitialRegistration = Boolean(data.createdAt);
+
+      if (isSuperAdmin) {
+        if (data.role !== undefined) payload.role = data.role;
+        if (data.status !== undefined) payload.status = data.status;
+        if (data.plan !== undefined) payload.plan = data.plan;
+        if (data.trialStartedAt !== undefined) payload.trialStartedAt = data.trialStartedAt;
+        if (data.trialEndsAt !== undefined) payload.trialEndsAt = data.trialEndsAt;
+        if (data.date_expiration_essai !== undefined) payload.date_expiration_essai = data.date_expiration_essai;
+        if (data.vipStartedAt !== undefined) payload.vipStartedAt = data.vipStartedAt;
+        if (data.vipEndsAt !== undefined) payload.vipEndsAt = data.vipEndsAt;
+        if (data.createdAt !== undefined) payload.createdAt = data.createdAt;
+      } else if (isInitialRegistration) {
+        // Enforce safe initial trial defaults only; no admin or VIP self-assignment
+        payload.role = 'seller';
+        payload.status = 'Actif';
+        payload.plan = 'Essai';
+        if (data.trialStartedAt !== undefined) payload.trialStartedAt = data.trialStartedAt;
+        if (data.trialEndsAt !== undefined) payload.trialEndsAt = data.trialEndsAt;
+        if (data.date_expiration_essai !== undefined) payload.date_expiration_essai = data.date_expiration_essai;
+        if (data.createdAt !== undefined) payload.createdAt = data.createdAt;
+      }
 
       if (data.useLoginNumberAsPublic !== undefined) payload.useLoginNumberAsPublic = Boolean(data.useLoginNumberAsPublic);
       if (data.commercialWhatsApp !== undefined) payload.commercialWhatsApp = data.commercialWhatsApp;
       if (data.allowCommercialContact !== undefined) payload.allowCommercialContact = Boolean(data.allowCommercialContact);
-      if (data.trialStartedAt) payload.trialStartedAt = data.trialStartedAt;
-      if (data.trialEndsAt) payload.trialEndsAt = data.trialEndsAt;
-      if (data.vipStartedAt) payload.vipStartedAt = data.vipStartedAt;
-      if (data.vipEndsAt) payload.vipEndsAt = data.vipEndsAt;
-      if (data.createdAt) payload.createdAt = data.createdAt;
 
       await setDoc(doc(db, 'users', uid), payload, { merge: true });
       const updated = await this.getUserProfile(uid);

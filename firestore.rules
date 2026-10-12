@@ -28,22 +28,48 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    // List of protected sensitive fields related to subscriptions, privileges and account status
+    function hasSensitiveSubscriptionFields() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'role',
+        'status',
+        'plan',
+        'trialStartedAt',
+        'trialEndsAt',
+        'date_expiration_essai',
+        'vipStartedAt',
+        'vipEndsAt'
+      ]);
+    }
+
     // 1. Users collection (Vendeurs & Admins)
     match /users/{uid} {
       // Public can read seller storefront info for catalog display
       allow get: if true;
       allow list: if isAdmin();
 
-      // Create: User can create their own document as a 'seller'
+      // Create: User can create their own document
+      // A seller can create their profile without being forced to set subscription fields,
+      // and cannot self-assign VIP status, VIP plan, admin role, or VIP dates.
       allow create: if isOwner(uid) && 
         request.resource.data.uid == uid &&
-        (request.resource.data.role == 'seller' || isAdmin());
+        (
+          isAdmin() ||
+          (
+            (!('role' in request.resource.data) || request.resource.data.role == 'seller') &&
+            (!('status' in request.resource.data) || request.resource.data.status in ['Actif', 'Essai', 'Gratuit']) &&
+            (!('plan' in request.resource.data) || request.resource.data.plan in ['Essai', 'Gratuit']) &&
+            !('vipStartedAt' in request.resource.data) &&
+            !('vipEndsAt' in request.resource.data)
+          )
+        );
 
-      // Update: Owner can update their profile but CANNOT self-escalate role to 'admin'
-      allow update: if (isOwner(uid) && (
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) ||
-        isAdmin()
-      )) || isAdmin();
+      // Update: Owner can update ordinary profile fields (name, logo, slogan, location, whatsapp, etc.)
+      // but CANNOT modify any sensitive subscription or privilege fields.
+      // Only an authorized admin can update role, status, plan, trial dates, or VIP dates.
+      allow update: if (
+        isOwner(uid) && request.resource.data.uid == uid && !hasSensitiveSubscriptionFields()
+      ) || isAdmin();
 
       // Delete: Only admin can delete account
       allow delete: if isAdmin();

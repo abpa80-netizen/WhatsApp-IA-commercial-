@@ -8,6 +8,7 @@
  */
 
 import assert from 'assert';
+import fs from 'fs';
 import { normalizeVendeur, DEFAULT_CONFIG } from '../src/services/api';
 import { DEFAULT_GLOBAL_SETTINGS } from '../src/services/firestoreService';
 import { OperationType, FirestoreErrorInfo } from '../src/firebase';
@@ -576,6 +577,300 @@ runTest('21. Maintien absolu du contrôle d’accès Google Sign-In réservé à
     const isAuthorized = emailNorm === 'foosco80@gmail.com';
     assert.strictEqual(isAuthorized, acc.expected, `Account ${acc.email} authorization must be ${acc.expected}`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// TEST GROUP 6: Firestore Rules — Protection des Champs d'Abonnement et Privilèges
+// ---------------------------------------------------------------------------
+
+const SENSITIVE_SUBSCRIPTION_KEYS = [
+  'role',
+  'status',
+  'plan',
+  'trialStartedAt',
+  'trialEndsAt',
+  'date_expiration_essai',
+  'vipStartedAt',
+  'vipEndsAt'
+];
+
+/**
+ * Exact simulation of firestore.rules logic for users/{uid} update
+ */
+function evaluateUserUpdateRule(
+  authContext: { uid: string; email?: string; isAdminRole?: boolean } | null,
+  targetDocUid: string,
+  updatedFields: string[]
+): { allowed: boolean; reason: string } {
+  if (!authContext) {
+    return { allowed: false, reason: 'Non authentifié' };
+  }
+
+  const isAdmin = 
+    authContext.email?.trim().toLowerCase() === 'foosco80@gmail.com' || 
+    Boolean(authContext.isAdminRole);
+
+  if (isAdmin) {
+    return { allowed: true, reason: 'Super Administrateur autorisé' };
+  }
+
+  const isOwner = authContext.uid === targetDocUid;
+  if (!isOwner) {
+    return { allowed: false, reason: 'Non propriétaire du document' };
+  }
+
+  const hasSensitiveFields = updatedFields.some(field => SENSITIVE_SUBSCRIPTION_KEYS.includes(field));
+  if (hasSensitiveFields) {
+    return { 
+      allowed: false, 
+      reason: `Modification de champs sensibles interdite aux vendeurs (${updatedFields.filter(f => SENSITIVE_SUBSCRIPTION_KEYS.includes(f)).join(', ')})` 
+    };
+  }
+
+  return { allowed: true, reason: 'Champs ordinaires autorisés' };
+}
+
+runTest('22. Un vendeur tentant de modifier son statut vers VIP est strictement rejeté par la règle Firestore', () => {
+  const sellerAuth = { uid: 'seller_123', email: 'vendeur@test.com' };
+  const targetUid = 'seller_123';
+
+  // Vendor attempts direct Firestore update with { status: 'VIP' }
+  const result = evaluateUserUpdateRule(sellerAuth, targetUid, ['status', 'updatedAt']);
+  assert.strictEqual(result.allowed, false, 'Seller must NOT be allowed to update status');
+  assert.ok(result.reason.includes('Modification de champs sensibles interdite'));
+});
+
+runTest('23. Un vendeur tentant de modifier son plan (plan: VIP / Gratuit) ou rôle est rejeté', () => {
+  const sellerAuth = { uid: 'seller_123', email: 'vendeur@test.com' };
+  const targetUid = 'seller_123';
+
+  for (const field of ['role', 'plan']) {
+    const res = evaluateUserUpdateRule(sellerAuth, targetUid, [field, 'updatedAt']);
+    assert.strictEqual(res.allowed, false, `Seller must NOT be allowed to modify ${field}`);
+    assert.ok(res.reason.includes('Modification de champs sensibles'));
+  }
+});
+
+runTest('24. Un vendeur tentant de prolonger son essai (trialEndsAt, date_expiration_essai) ou dates VIP est rejeté', () => {
+  const sellerAuth = { uid: 'seller_123', email: 'vendeur@test.com' };
+  const targetUid = 'seller_123';
+
+  const dateFields = ['trialStartedAt', 'trialEndsAt', 'date_expiration_essai', 'vipStartedAt', 'vipEndsAt'];
+  for (const field of dateFields) {
+    const res = evaluateUserUpdateRule(sellerAuth, targetUid, [field, 'updatedAt']);
+    assert.strictEqual(res.allowed, false, `Seller must NOT be allowed to modify ${field}`);
+    assert.ok(res.reason.includes('Modification de champs sensibles'));
+  }
+});
+
+runTest('25. Un vendeur modifiant des champs ordinaires (name, slogan, logo, phone, location) est autorisé', () => {
+  const sellerAuth = { uid: 'seller_123', email: 'vendeur@test.com' };
+  const targetUid = 'seller_123';
+
+  const ordinaryUpdates = [
+    ['name', 'updatedAt'],
+    ['slogan', 'location', 'updatedAt'],
+    ['logo', 'updatedAt'],
+    ['whatsappNumber', 'phoneNormalized', 'updatedAt'],
+    ['commercialWhatsApp', 'useLoginNumberAsPublic', 'allowCommercialContact'],
+    ['currency', 'publicSlug'],
+  ];
+
+  for (const fields of ordinaryUpdates) {
+    const res = evaluateUserUpdateRule(sellerAuth, targetUid, fields);
+    assert.strictEqual(res.allowed, true, `Seller MUST be allowed to update ordinary profile fields [${fields.join(', ')}]`);
+  }
+});
+
+runTest('26. L’administrateur autorisé (foosco80@gmail.com) peut modifier tous les statuts, plans et dates sans blocage', () => {
+  const adminAuth = { uid: 'admin_uid_777', email: 'foosco80@gmail.com' };
+  const targetUid = 'seller_123';
+
+  // Admin toggling VIP status or updating expiration dates for a vendor
+  const adminActions = [
+    ['status', 'plan', 'vipStartedAt', 'updatedAt'],
+    ['status', 'updatedAt'],
+    ['trialEndsAt', 'date_expiration_essai', 'updatedAt'],
+    ['role', 'updatedAt'],
+  ];
+
+  for (const fields of adminActions) {
+    const res = evaluateUserUpdateRule(adminAuth, targetUid, fields);
+    assert.strictEqual(res.allowed, true, `Admin MUST be allowed to update sensitive fields [${fields.join(', ')}]`);
+    assert.strictEqual(res.reason, 'Super Administrateur autorisé');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// TEST GROUP 7: Création de Profil, Modification Propriétaire et Base Nommée
+// ---------------------------------------------------------------------------
+
+/**
+ * Exact simulation of firestore.rules logic for users/{uid} CREATE
+ */
+function evaluateUserCreateRule(
+  authContext: { uid: string; email?: string; isAdminRole?: boolean } | null,
+  targetDocUid: string,
+  incomingData: Record<string, any>
+): { allowed: boolean; reason: string } {
+  if (!authContext) {
+    return { allowed: false, reason: 'Non authentifié' };
+  }
+
+  const isOwner = authContext.uid === targetDocUid;
+  if (!isOwner) {
+    return { allowed: false, reason: 'Non propriétaire du document cible' };
+  }
+
+  if (incomingData.uid !== targetDocUid) {
+    return { allowed: false, reason: 'UID dans le document ne correspond pas à la cible' };
+  }
+
+  const isAdmin = 
+    authContext.email?.trim().toLowerCase() === 'foosco80@gmail.com' || 
+    Boolean(authContext.isAdminRole);
+
+  if (isAdmin) {
+    return { allowed: true, reason: 'Super Administrateur autorisé' };
+  }
+
+  // Seller profile creation rules
+  const roleOk = !('role' in incomingData) || incomingData.role === 'seller';
+  const statusOk = !('status' in incomingData) || ['Actif', 'Essai', 'Gratuit'].includes(incomingData.status);
+  const planOk = !('plan' in incomingData) || ['Essai', 'Gratuit'].includes(incomingData.plan);
+  const noVipStart = !('vipStartedAt' in incomingData);
+  const noVipEnd = !('vipEndsAt' in incomingData);
+
+  if (!roleOk) {
+    return { allowed: false, reason: 'Rôle interdit : un vendeur ne peut pas s’attribuer le rôle admin' };
+  }
+  if (!statusOk) {
+    return { allowed: false, reason: 'Statut interdit : un vendeur ne peut pas s’attribuer le statut VIP à la création' };
+  }
+  if (!planOk) {
+    return { allowed: false, reason: 'Plan interdit : un vendeur ne peut pas s’attribuer le plan VIP à la création' };
+  }
+  if (!noVipStart || !noVipEnd) {
+    return { allowed: false, reason: 'Dates VIP interdites à la création par un vendeur' };
+  }
+
+  return { allowed: true, reason: 'Création autorisée' };
+}
+
+runTest('27. Création de profil sans champs administrateur : un vendeur peut créer son profil avec uniquement ses champs ordinaires', () => {
+  const sellerAuth = { uid: 'seller_create_999', email: 'nouveau@vendeur.com' };
+  const targetUid = 'seller_create_999';
+
+  // Payload containing ONLY ordinary fields (name, phone, slogan, location, logo, currency, updatedAt)
+  // WITHOUT role, status, plan, trialStartedAt, trialEndsAt
+  const ordinaryPayload = {
+    uid: targetUid,
+    name: 'Boutique Alpha',
+    whatsappNumber: '+212612345678',
+    phoneNormalized: '212612345678',
+    slogan: 'Mode & tendance',
+    location: 'Rabat, Maroc',
+    logo: 'https://images.unsplash.com/photo-1234',
+    currency: 'MAD',
+    updatedAt: new Date().toISOString(),
+  };
+
+  const res = evaluateUserCreateRule(sellerAuth, targetUid, ordinaryPayload);
+  assert.strictEqual(res.allowed, true, 'Seller MUST be allowed to create profile with ordinary fields alone');
+});
+
+runTest('28. Création de profil : les valeurs d’essai initiales sont autorisées mais toute tentative VIP ou admin est rejetée', () => {
+  const sellerAuth = { uid: 'seller_reg_111', email: 'reg@vendeur.com' };
+  const targetUid = 'seller_reg_111';
+
+  // 1. Safe registration payload with trial defaults (from authService)
+  const safeRegistration = {
+    uid: targetUid,
+    name: 'Boutique Beta',
+    whatsappNumber: '+22507000000',
+    phoneNormalized: '22507000000',
+    role: 'seller',
+    status: 'Actif',
+    plan: 'Essai',
+    trialStartedAt: new Date().toISOString(),
+    trialEndsAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const safeRes = evaluateUserCreateRule(sellerAuth, targetUid, safeRegistration);
+  assert.strictEqual(safeRes.allowed, true, 'Safe trial registration must be allowed');
+
+  // 2. Exploit: Seller tries to self-assign role 'admin'
+  const hackAdmin = { ...safeRegistration, role: 'admin' };
+  const hackAdminRes = evaluateUserCreateRule(sellerAuth, targetUid, hackAdmin);
+  assert.strictEqual(hackAdminRes.allowed, false, 'Self-assigned admin role must be rejected');
+
+  // 3. Exploit: Seller tries to self-assign status 'VIP'
+  const hackVipStatus = { ...safeRegistration, status: 'VIP' };
+  const hackVipStatusRes = evaluateUserCreateRule(sellerAuth, targetUid, hackVipStatus);
+  assert.strictEqual(hackVipStatusRes.allowed, false, 'Self-assigned VIP status must be rejected');
+
+  // 4. Exploit: Seller tries to self-assign plan 'VIP'
+  const hackVipPlan = { ...safeRegistration, plan: 'VIP' };
+  const hackVipPlanRes = evaluateUserCreateRule(sellerAuth, targetUid, hackVipPlan);
+  assert.strictEqual(hackVipPlanRes.allowed, false, 'Self-assigned VIP plan must be rejected');
+
+  // 5. Exploit: Seller tries to self-assign vipStartedAt
+  const hackVipDate = { ...safeRegistration, vipStartedAt: new Date().toISOString() };
+  const hackVipDateRes = evaluateUserCreateRule(sellerAuth, targetUid, hackVipDate);
+  assert.strictEqual(hackVipDateRes.allowed, false, 'Self-assigned VIP dates must be rejected');
+});
+
+runTest('29. Modification de profil : un vendeur authentifié peut modifier ses informations sans déclencher d’erreur de permission', () => {
+  const sellerAuth = { uid: 'seller_edit_555', email: 'edit@vendeur.com' };
+  const targetUid = 'seller_edit_555';
+
+  // Normal profile fields edited in BrandingSettings form
+  const vendorEditFields = [
+    'name',
+    'whatsappNumber',
+    'phoneNormalized',
+    'slogan',
+    'location',
+    'logo',
+    'currency',
+    'useLoginNumberAsPublic',
+    'commercialWhatsApp',
+    'allowCommercialContact',
+    'updatedAt'
+  ];
+
+  const res = evaluateUserUpdateRule(sellerAuth, targetUid, vendorEditFields);
+  assert.strictEqual(res.allowed, true, 'Owner MUST be permitted to modify own branding and profile information');
+});
+
+runTest('30. Isolation inter-vendeurs : un vendeur ne peut pas modifier le document d’un autre vendeur', () => {
+  const aliceAuth = { uid: 'seller_alice', email: 'alice@vendeur.com' };
+  const bobUid = 'seller_bob';
+
+  const res = evaluateUserUpdateRule(aliceAuth, bobUid, ['name', 'updatedAt']);
+  assert.strictEqual(res.allowed, false, 'Alice MUST NOT be able to modify Bob’s user profile');
+  assert.strictEqual(res.reason, 'Non propriétaire du document');
+});
+
+runTest('31. Ciblage de la base Firestore personnalisée (ai-studio-whatsappcommerci-1b7e18c2-9951-431d-9625-32bdcef0db27)', () => {
+  // Verify firebase-applet-config.json
+  const config = JSON.parse(fs.readFileSync('firebase-applet-config.json', 'utf8'));
+  assert.strictEqual(
+    config.firestoreDatabaseId,
+    'ai-studio-whatsappcommerci-1b7e18c2-9951-431d-9625-32bdcef0db27',
+    'The project must target the specific database ID, not (default)'
+  );
+
+  // Verify firestore.rules applies dynamically to any database via {database} wildcard
+  const rulesContent = fs.readFileSync('firestore.rules', 'utf8');
+  assert.ok(
+    rulesContent.includes('match /databases/{database}/documents'),
+    'firestore.rules must use {database} wildcard to cover the custom database'
+  );
+  assert.ok(
+    !rulesContent.includes('match /databases/(default)/documents'),
+    'firestore.rules must NOT be hardcoded to (default)'
+  );
 });
 
 console.log(`\n🎉 All ${testsPassed} Admin Firestore and Security tests passed successfully!\n`);

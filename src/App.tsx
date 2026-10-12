@@ -447,6 +447,10 @@ function MainApp() {
   // Branding update
   const handleUpdateBranding = async (data: Partial<Vendeur>) => {
     if (!activeVendeur) return;
+    if (data.id === activeVendeur.id && data.updatedAt) {
+      setActiveVendeur(data as Vendeur);
+      return;
+    }
     const updated = await ApiService.updateBranding(activeVendeur.id, data);
     setActiveVendeur(updated);
   };
