@@ -1,13 +1,49 @@
 import React, { useEffect, useState } from 'react';
 import { Download, Smartphone, X, Check, Share, PlusSquare } from 'lucide-react';
 
-interface BeforeInstallPromptEvent extends Event {
+export interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 }
 
+// Global capture to ensure beforeinstallprompt is NEVER missed, even before React mounts or auth finishes
+let capturedInstallPrompt: BeforeInstallPromptEvent | null = null;
+const promptListeners = new Set<(prompt: BeforeInstallPromptEvent | null) => void>();
+
+const isAiStudioPreview =
+  import.meta.env.DEV ||
+  (typeof window !== 'undefined' && (
+    window.location.hostname.includes('run.app') ||
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1'
+  ));
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeinstallprompt', (e: Event) => {
+    e.preventDefault();
+    capturedInstallPrompt = e as BeforeInstallPromptEvent;
+    promptListeners.forEach((listener) => listener(capturedInstallPrompt));
+  });
+
+  window.addEventListener('appinstalled', () => {
+    capturedInstallPrompt = null;
+    promptListeners.forEach((listener) => listener(null));
+  });
+
+  // Early Service Worker registration in production on Vercel
+  if ('serviceWorker' in navigator && !isAiStudioPreview) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch((err) => {
+        console.warn('[SW Registration error]', err);
+      });
+    });
+  }
+}
+
 export function usePWASelective(enabled: boolean) {
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(
+    () => (enabled ? capturedInstallPrompt : null)
+  );
   const [isInstalled, setIsInstalled] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
   const [isAndroid, setIsAndroid] = useState(false);
@@ -30,7 +66,7 @@ export function usePWASelective(enabled: boolean) {
     const existingManifest = document.getElementById('pwa-manifest-link');
 
     if (!enabled) {
-      // Public customer shop: remove manifest link and unregister SW if needed
+      // Public customer shop: remove manifest link if present
       if (existingManifest) {
         existingManifest.remove();
       }
@@ -47,14 +83,18 @@ export function usePWASelective(enabled: boolean) {
       document.head.appendChild(manifestLink);
     }
 
-    // Register Service Worker in Merchant / Admin mode
-    // Note: Skipped in AI Studio preview / dev mode where /sw.js fails due to proxy redirect, preserved in production on Vercel.
-    const isAiStudioPreview =
-      import.meta.env.DEV ||
-      window.location.hostname.includes('run.app') ||
-      window.location.hostname === 'localhost' ||
-      window.location.hostname === '127.0.0.1';
+    // If already captured before mounting, set it
+    if (capturedInstallPrompt) {
+      setDeferredPrompt(capturedInstallPrompt);
+    }
 
+    const handlePromptChange = (prompt: BeforeInstallPromptEvent | null) => {
+      setDeferredPrompt(prompt);
+    };
+    promptListeners.add(handlePromptChange);
+
+    // Register Service Worker in Merchant / Admin mode if not already registered
+    // Note: Skipped in AI Studio preview / dev mode where /sw.js fails due to proxy redirect, preserved in production on Vercel.
     if ('serviceWorker' in navigator && !isAiStudioPreview) {
       navigator.serviceWorker.register('/sw.js').catch((err) => {
         console.warn('[SW Registration error]', err);
@@ -63,37 +103,49 @@ export function usePWASelective(enabled: boolean) {
 
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
-      setDeferredPrompt(e as BeforeInstallPromptEvent);
+      const promptEvent = e as BeforeInstallPromptEvent;
+      capturedInstallPrompt = promptEvent;
+      setDeferredPrompt(promptEvent);
     };
 
     const handleAppInstalled = () => {
       setIsInstalled(true);
       setDeferredPrompt(null);
+      capturedInstallPrompt = null;
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
 
     return () => {
+      promptListeners.delete(handlePromptChange);
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
     };
   }, [enabled]);
 
   const install = async () => {
-    if (!deferredPrompt) return false;
-    await deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === 'accepted') {
-      setIsInstalled(true);
-      setDeferredPrompt(null);
-      return true;
+    const promptToUse = deferredPrompt || capturedInstallPrompt;
+    if (!promptToUse) return false;
+    try {
+      await promptToUse.prompt();
+      const choiceResult = await promptToUse.userChoice;
+      if (choiceResult && choiceResult.outcome === 'accepted') {
+        setIsInstalled(true);
+        setDeferredPrompt(null);
+        capturedInstallPrompt = null;
+        promptListeners.forEach((l) => l(null));
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.warn('[PWA] Error triggering install prompt:', err);
+      return false;
     }
-    return false;
   };
 
   return {
-    isInstallable: !!deferredPrompt,
+    isInstallable: !!(deferredPrompt || capturedInstallPrompt),
     isInstalled,
     isIOS,
     isAndroid,
@@ -121,10 +173,10 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({ enabled }) =
     return null;
   }
 
-  const handleInstallClick = () => {
+  const handleInstallClick = async () => {
     if (isInstallable) {
       // Native one-click install available via beforeinstallprompt
-      install();
+      await install();
     } else if (isAndroid) {
       // beforeinstallprompt not available on Android: show browser-adapted instructions
       setShowAndroidModal(true);
@@ -135,18 +187,10 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({ enabled }) =
   };
 
   const renderButtonContent = () => {
-    if (isInstallable) {
-      return (
-        <>
-          <Download className="w-3.5 h-3.5" />
-          <span>Installer l'application sur mon téléphone</span>
-        </>
-      );
-    }
     if (isAndroid) {
       return (
         <>
-          <Smartphone className="w-3.5 h-3.5" />
+          <Download className="w-3.5 h-3.5" />
           <span>Installer sur Android</span>
         </>
       );
@@ -156,6 +200,14 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({ enabled }) =
         <>
           <Share className="w-3.5 h-3.5" />
           <span>Installer sur iPhone / iPad</span>
+        </>
+      );
+    }
+    if (isInstallable) {
+      return (
+        <>
+          <Download className="w-3.5 h-3.5" />
+          <span>Installer l'application</span>
         </>
       );
     }

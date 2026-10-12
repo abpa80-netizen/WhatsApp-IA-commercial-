@@ -108,12 +108,39 @@ assert(
 );
 console.log('✅ [PASS] 12. Enregistrement Service Worker sécurisé pour Vercel et sans erreur de redirection en aperçu');
 
-// H. Intégrité des règles Firestore et Firebase
+// H. Capture précoce de beforeinstallprompt au chargement du bundle
+assert(
+  pwaContent.includes('capturedInstallPrompt') &&
+  pwaContent.includes("window.addEventListener('beforeinstallprompt'"),
+  'ÉCHEC: beforeinstallprompt doit être capturé dès le chargement du bundle pour ne pas être manqué'
+);
+console.log('✅ [PASS] 13. Capture globale et précoce de beforeinstallprompt assurée');
+
+// I. Traitement complet du prompt et du choix utilisateur
+assert(
+  pwaContent.includes('await promptToUse.prompt()') &&
+  pwaContent.includes('await promptToUse.userChoice') &&
+  pwaContent.includes("outcome === 'accepted'"),
+  'ÉCHEC: L\'appel natif doit appeler prompt() et traiter userChoice'
+);
+console.log('✅ [PASS] 14. Déclenchement natif avec prompt() et traitement réel de userChoice');
+
+// J. Intégrité de index.html pour la conformité PWA Android Chromium
+const indexContent = fs.readFileSync(path.resolve('./index.html'), 'utf-8');
+assert(
+  indexContent.includes('id="pwa-manifest-link"') &&
+  indexContent.includes('href="/manifest.json"') &&
+  indexContent.includes('name="theme-color"'),
+  'ÉCHEC: index.html doit déclarer le manifest et theme-color dès le chargement HTML pour que Chromium évalue l\'installation'
+);
+console.log('✅ [PASS] 15. index.html intègre le manifest et theme-color indispensables pour Android Chromium');
+
+// K. Intégrité des règles Firestore et Firebase
 const rulesContent = fs.readFileSync(path.resolve('./firestore.rules'), 'utf-8');
 assert(
   rulesContent.includes('hasSensitiveSubscriptionFields'),
   'ÉCHEC: Les règles de sécurité des abonnements doivent être intactes'
 );
-console.log('✅ [PASS] 13. Intégrité absolue des règles de sécurité Firestore et abonnements conservée');
+console.log('✅ [PASS] 16. Intégrité absolue des règles de sécurité Firestore et abonnements conservée');
 
-console.log('🎉 TOUS LES 13 TESTS PWA SÉLECTIF ET SÉCURITÉ ONT RÉUSSI !');
+console.log('🎉 TOUS LES 16 TESTS PWA SÉLECTIF ET SÉCURITÉ ONT RÉUSSI !');
