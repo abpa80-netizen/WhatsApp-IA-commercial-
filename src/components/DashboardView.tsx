@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { formatCurrency } from '../services/aiGenerator';
 import { useToast } from './Toast';
+import { StoreVisitsChart } from './StoreVisitsChart';
 
 interface DashboardViewProps {
   vendeur: Vendeur;
@@ -297,6 +298,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <p className="text-[11px] text-slate-400 mt-1">Moyenne e-commerce : ~2.5%</p>
         </div>
       </div>
+
+      {/* Data Visualization: Store Daily Visits Evolution (Recharts) */}
+      <StoreVisitsChart vendeur={vendeur} onOpenStore={onOpenStore} />
 
       {/* Quick Launch Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

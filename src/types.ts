@@ -112,6 +112,15 @@ export interface AdminData {
   vendeurs: Vendeur[];
 }
 
+export interface DailyVisitStat {
+  fullDate: string;
+  date: string;
+  displayDate: string;
+  views: number;
+  clicks: number;
+  conversions: number;
+}
+
 export type AIMessageObjective = 'prospection' | 'relance' | 'objections' | 'promo';
 export type AIMessageTone = 'amical' | 'pro' | 'urgent' | 'persuasif';
 

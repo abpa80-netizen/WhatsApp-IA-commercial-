@@ -25,13 +25,13 @@ import {
   Zap,
   CheckCircle2,
   Share2,
-  Link as LinkIcon
+  Link as LinkIcon,
+  AlertCircle
 } from 'lucide-react';
 import { ApiService } from '../services/api';
 import { useToast } from './Toast';
-import { SafeStorage } from '../services/storage';
 import { auth, onAuthStateChanged } from '../firebase';
-import { AuthService } from '../services/authService';
+import { AuthService, ADMIN_EMAIL } from '../services/authService';
 
 interface AdminPortalProps {
   config: SystemConfig;
@@ -48,17 +48,21 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 }) => {
   const { showToast } = useToast();
   
-  // Track Firebase Auth user
+  // Track Firebase Auth user & admin privilege
   const [currentUser, setCurrentUser] = useState(() => auth.currentUser);
-  const [signingInGoogle, setSigningInGoogle] = useState(false);
-  const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
+  const isAuthorizedAdmin = Boolean(
+    currentUser && 
+    currentUser.email && 
+    currentUser.email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase()
+  );
 
-  // PIN lock protection (isolated admin access)
-  const [isUnlocked, setIsUnlocked] = useState<boolean>(() => {
-    return SafeStorage.getSession('wca_admin_session') === 'true';
-  });
-  const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState(false);
+  // Admin login states
+  const [adminPasswordInput, setAdminPasswordInput] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [signingInGoogle, setSigningInGoogle] = useState(false);
+  const [signingInPassword, setSigningInPassword] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
 
   const [adminData, setAdminData] = useState<AdminData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -94,19 +98,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setCurrentUser(u);
-      if (isUnlocked) {
+      if (u && u.email && u.email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
         fetchAdminData(true);
+      } else {
+        setAdminData(null);
       }
     });
     return () => unsub();
-  }, [isUnlocked]);
-
-  // Admin PIN & Security Profile
-  const [adminCurrentPin, setAdminCurrentPin] = useState('');
-  const [adminNewPin, setAdminNewPin] = useState('');
-  const [adminConfirmPin, setAdminConfirmPin] = useState('');
-  const [savingAdminSecurity, setSavingAdminSecurity] = useState(false);
-  const [showAdminPinFields, setShowAdminPinFields] = useState(false);
+  }, []);
 
   const fetchAdminData = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -132,21 +131,56 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
   const handleGoogleAdminLogin = async () => {
     setSigningInGoogle(true);
+    setAuthError(null);
     try {
-      await AuthService.loginWithGoogle();
+      await AuthService.loginAdminWithGoogle();
       showToast('Authentification Administrateur Firebase réussie !', 'success');
       setDiagnosticError(null);
-      await fetchAdminData(false);
     } catch (err: any) {
       console.error('[Admin Google Login Error]:', err);
-      showToast(err?.message || 'Erreur d’authentification Google', 'error');
+      const msg = err?.message || 'Erreur lors de la connexion Google';
+      setAuthError(msg);
+      showToast(msg, 'error');
     } finally {
       setSigningInGoogle(false);
     }
   };
 
+  const handlePasswordAdminLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    if (!adminPasswordInput.trim()) {
+      setAuthError('Veuillez saisir votre mot de passe administrateur.');
+      return;
+    }
+    setSigningInPassword(true);
+    try {
+      await AuthService.loginAdminWithPassword(adminPasswordInput);
+      showToast('Authentification Administrateur Firebase réussie !', 'success');
+      setDiagnosticError(null);
+      setAdminPasswordInput('');
+    } catch (err: any) {
+      console.error('[Admin Password Login Error]:', err);
+      const msg = err?.message || 'Mot de passe administrateur incorrect.';
+      setAuthError(msg);
+      showToast(msg, 'error');
+    } finally {
+      setSigningInPassword(false);
+    }
+  };
+
+  const handleLogoutAdmin = async () => {
+    try {
+      await AuthService.logout();
+      showToast('Session Administrateur fermée.', 'info');
+      onBackToApp();
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
+  };
+
   useEffect(() => {
-    if (isUnlocked) {
+    if (isAuthorizedAdmin) {
       fetchAdminData();
       // Auto-poll every 3.5 seconds so newly registered users and profile updates appear automatically
       const interval = setInterval(() => {
@@ -172,96 +206,197 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         window.removeEventListener('storage', handleStorage);
       };
     }
-  }, [isUnlocked]);
-
-  // Handle PIN unlock
-  const handleUnlock = (e: React.FormEvent) => {
-    e.preventDefault();
-    const entered = pinInput.trim();
-    const targetPin = (config as SystemConfig & { admin_pin?: string })?.admin_pin;
-    
-    // Validate without exposing plaintext PINs in frontend bundle
-    if ((targetPin && entered === targetPin) || (!targetPin && entered.length >= 4)) {
-      SafeStorage.setSession('wca_admin_session', 'true');
-      setIsUnlocked(true);
-      setPinError(false);
-      showToast('Accès Super Administrateur déverrouillé', 'success');
-    } else {
-      setPinError(true);
-      showToast('Code PIN invalide', 'error');
-    }
-  };
-
-  const handleLockAdmin = () => {
-    SafeStorage.removeSession('wca_admin_session');
-    setIsUnlocked(false);
-    setPinInput('');
-    showToast('Session Administrateur verrouillée', 'info');
-  };
+  }, [isAuthorizedAdmin]);
 
   const handleCopyText = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
     showToast(`${label} copié !`, 'success');
   };
 
-  // 1. PIN Lock Screen if not authenticated
-  if (!isUnlocked) {
+  // 1. Unauthenticated Screen: Requires genuine Firebase Auth for foosco80@gmail.com
+  if (!currentUser) {
     return (
-      <div id="admin-pin-lock" className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4">
-        <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/10 rounded-full blur-2xl pointer-events-none" />
+      <div id="admin-auth-screen" className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4">
+        <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden space-y-6">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
 
-          <div className="text-center mb-6">
-            <div className="w-14 h-14 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center mx-auto mb-3 shadow-inner">
-              <KeyRound className="w-7 h-7" />
+          <div className="text-center space-y-2">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 text-[#25D366] border border-emerald-500/30 flex items-center justify-center mx-auto shadow-inner">
+              <ShieldCheck className="w-7 h-7" />
             </div>
-            <h1 className="text-xl font-extrabold text-white">Espace Administrateur</h1>
-            <p className="text-xs text-slate-400 mt-1">
-              Veuillez saisir votre code PIN secret pour accéder au panneau de contrôle SaaS.
+            <h1 className="text-xl font-extrabold text-white">Espace Administrateur Sécurisé</h1>
+            <p className="text-xs text-slate-400">
+              Accès strictement réservé au compte administrateur autorisé{' '}
+              <strong className="text-emerald-400 font-mono">{ADMIN_EMAIL}</strong>.
             </p>
           </div>
 
-          <form onSubmit={handleUnlock} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2 text-center">
-                Code PIN Administrateur
-              </label>
-              <input
-                type="password"
-                maxLength={8}
-                autoFocus
-                placeholder="••••"
-                value={pinInput}
-                onChange={(e) => {
-                  setPinInput(e.target.value);
-                  setPinError(false);
-                }}
-                className={`w-full bg-slate-950 border ${
-                  pinError ? 'border-rose-500 ring-2 ring-rose-500/30' : 'border-slate-700 focus:border-rose-500 focus:ring-2 focus:ring-rose-500/30'
-                } rounded-2xl py-3 text-center text-2xl font-mono tracking-widest text-white focus:outline-none transition-all`}
-              />
-              <p className="text-[11px] text-slate-400 text-center mt-2">
-                Accès sécurisé réservé aux administrateurs autorisés
-              </p>
+          {authError && (
+            <div className="bg-rose-950/80 border border-rose-800/80 rounded-2xl p-3.5 text-xs text-rose-300 flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold block">Échec d’authentification</span>
+                <span className="text-[11px] text-rose-300">{authError}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Method 1: Google Sign-In */}
+          <div className="space-y-3">
+            <button
+              id="btn-admin-google-login"
+              type="button"
+              onClick={handleGoogleAdminLogin}
+              disabled={signingInGoogle || signingInPassword}
+              className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-100 active:scale-98 text-slate-900 font-bold py-3.5 px-4 rounded-xl shadow-md transition-all text-xs cursor-pointer disabled:opacity-50"
+            >
+              {signingInGoogle ? (
+                <RotateCw className="w-4 h-4 animate-spin text-slate-900" />
+              ) : (
+                <svg className="w-4 h-4" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                </svg>
+              )}
+              <span>Se connecter avec Google ({ADMIN_EMAIL})</span>
+            </button>
+
+            <div className="relative flex items-center justify-center my-3">
+              <div className="border-t border-slate-800 w-full" />
+              <span className="bg-slate-900 px-3 text-[10px] text-slate-500 uppercase tracking-wider">
+                ou mot de passe Firebase
+              </span>
+              <div className="border-t border-slate-800 w-full" />
             </div>
 
-            <button
-              type="submit"
-              className="w-full flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-500 active:scale-98 text-white font-bold py-3 rounded-xl shadow-lg transition-all text-xs cursor-pointer"
-            >
-              <Unlock className="w-4 h-4" />
-              <span>Déverrouiller le portail</span>
-            </button>
-          </form>
+            {/* Method 2: Firebase Email/Password Sign-In */}
+            <form onSubmit={handlePasswordAdminLogin} className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                  Identifiant Administrateur
+                </label>
+                <input
+                  type="email"
+                  value={ADMIN_EMAIL}
+                  disabled
+                  className="w-full bg-slate-950/70 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-400 font-mono cursor-not-allowed"
+                />
+              </div>
 
-          <div className="mt-5 pt-4 border-t border-slate-800 text-center">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider">
+                    Mot de passe
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="text-[10px] text-slate-400 hover:text-slate-200 cursor-pointer"
+                  >
+                    {showPassword ? 'Masquer' : 'Afficher'}
+                  </button>
+                </div>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="••••••••••••"
+                    value={adminPasswordInput}
+                    onChange={(e) => {
+                      setAdminPasswordInput(e.target.value);
+                      setAuthError(null);
+                    }}
+                    className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder:text-slate-600 transition-all"
+                    required
+                  />
+                </div>
+              </div>
+
+              <button
+                id="btn-admin-password-login"
+                type="submit"
+                disabled={signingInPassword || signingInGoogle}
+                className="w-full flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#20ba59] active:scale-98 text-slate-950 font-bold py-3 px-4 rounded-xl shadow-lg transition-all text-xs cursor-pointer disabled:opacity-50 mt-2"
+              >
+                {signingInPassword ? (
+                  <RotateCw className="w-4 h-4 animate-spin text-slate-950" />
+                ) : (
+                  <Lock className="w-4 h-4" />
+                )}
+                <span>Se connecter à l’Administration</span>
+              </button>
+            </form>
+          </div>
+
+          <div className="pt-2 border-t border-slate-800 text-center">
             <button
               type="button"
               onClick={onBackToApp}
               className="text-xs font-semibold text-slate-400 hover:text-slate-200 transition-colors flex items-center justify-center gap-1.5 mx-auto cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Retour à l’accueil</span>
+              <span>Retour à l’application</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Authenticated but Unauthorized User Screen (e.g. Regular Seller or Other Google Account)
+  if (currentUser && !isAuthorizedAdmin) {
+    return (
+      <div id="admin-access-denied" className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4">
+        <div className="w-full max-w-md bg-slate-900 border border-rose-900/60 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden space-y-6">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/10 rounded-full blur-2xl pointer-events-none" />
+
+          <div className="text-center space-y-2">
+            <div className="w-14 h-14 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center mx-auto shadow-inner">
+              <Lock className="w-7 h-7" />
+            </div>
+            <h1 className="text-xl font-extrabold text-white">Accès Administrateur Refusé</h1>
+            <p className="text-xs text-slate-400">
+              L’accès à cette section est strictement réservé au compte Super Administrateur autorisé.
+            </p>
+          </div>
+
+          <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 text-xs space-y-2">
+            <div className="text-slate-400">
+              Compte actuellement connecté :
+            </div>
+            <div className="font-mono text-rose-300 font-bold break-all">
+              {currentUser.email || currentUser.phoneNumber || `UID: ${currentUser.uid}`}
+            </div>
+            <div className="text-[11px] text-slate-400 pt-1 border-t border-slate-800">
+              Ce compte ne dispose pas des privilèges administrateur. Seul le compte Firebase{' '}
+              <strong className="text-emerald-400 font-mono">{ADMIN_EMAIL}</strong> est habilité.
+            </div>
+          </div>
+
+          {authError && (
+            <div className="bg-rose-950/80 border border-rose-800/80 rounded-2xl p-3 text-xs text-rose-300">
+              {authError}
+            </div>
+          )}
+
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={handleGoogleAdminLogin}
+              disabled={signingInGoogle}
+              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-slate-950 font-bold py-3.5 px-4 rounded-xl text-xs shadow-md transition-all cursor-pointer disabled:opacity-50"
+            >
+              <ShieldCheck className="w-4 h-4" />
+              <span>{signingInGoogle ? 'Connexion en cours...' : `Se connecter avec Google (${ADMIN_EMAIL})`}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleLogoutAdmin}
+              className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold py-3 px-4 rounded-xl text-xs transition-all cursor-pointer"
+            >
+              Se déconnecter et retourner à l’application
             </button>
           </div>
         </div>
@@ -382,37 +517,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     }
   };
 
-  const handleSaveAdminSecurity = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (adminNewPin && adminNewPin.length < 4) {
-      showToast('Le nouveau code PIN doit comporter au moins 4 chiffres', 'error');
-      return;
-    }
-    if (adminNewPin && adminNewPin !== adminConfirmPin) {
-      showToast('Les deux codes PIN saisis ne correspondent pas', 'error');
-      return;
-    }
-
-    setSavingAdminSecurity(true);
-    try {
-      const updated = await ApiService.updateAdminSecurity({
-        currentPin: adminCurrentPin,
-        newPin: adminNewPin ? adminNewPin.trim() : undefined,
-        whatsappSupport: whatsappSupport.trim(),
-      });
-      await onUpdateConfig(updated);
-      setAdminCurrentPin('');
-      setAdminNewPin('');
-      setAdminConfirmPin('');
-      setShowAdminPinFields(false);
-      showToast('Profil et sécurité Admin (WhatsApp Support & PIN) mis à jour !', 'success');
-    } catch (err: any) {
-      showToast(err?.message || 'Erreur lors de la mise à jour de la sécurité', 'error');
-    } finally {
-      setSavingAdminSecurity(false);
-    }
-  };
-
   const trialVendors = (adminData?.vendeurs || []).filter(v => v && v.status !== 'VIP');
 
   const filteredVendeurs = (adminData?.vendeurs || []).filter((v) => {
@@ -438,7 +542,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       <header className="bg-slate-950 border-b border-slate-800 px-4 py-4 sticky top-0 z-30">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-rose-600/20 text-rose-400 border border-rose-600/30 flex items-center justify-center font-bold">
+            <div className="w-10 h-10 rounded-xl bg-emerald-600/20 text-[#25D366] border border-emerald-500/30 flex items-center justify-center font-bold">
               <ShieldCheck className="w-6 h-6" />
             </div>
             <div>
@@ -457,12 +561,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </button>
 
             <button
-              onClick={handleLockAdmin}
-              className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
-              title="Verrouiller l’accès admin"
+              onClick={handleLogoutAdmin}
+              className="flex items-center gap-1.5 bg-rose-950/60 hover:bg-rose-900 border border-rose-800/60 text-rose-300 px-3 py-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+              title="Déconnecter la session administrateur"
             >
               <Lock className="w-3.5 h-3.5 text-rose-400" />
-              <span className="hidden sm:inline">Verrouiller</span>
+              <span className="hidden sm:inline">Déconnexion Admin</span>
             </button>
 
             <button
@@ -479,56 +583,27 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
       <main className="max-w-6xl mx-auto px-4 py-6 space-y-8">
         {/* Firebase Admin Authentication Status & Diagnostics */}
-        {currentUser && (currentUser.email === 'foosco80@gmail.com') ? (
-          <div className="bg-emerald-950/60 border border-emerald-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-md">
-            <div className="flex items-center gap-2.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-              <div>
-                <span className="font-bold text-white">Session Firebase Administrateur Active : </span>
-                <span className="font-mono text-emerald-300 font-semibold">{currentUser.email}</span>
-                <span className="text-slate-400 ml-2">UID: {currentUser.uid}</span>
-              </div>
+        <div className="bg-emerald-950/60 border border-emerald-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-md">
+          <div className="flex items-center gap-2.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <div>
+              <span className="font-bold text-white">Session Firebase Administrateur Active : </span>
+              <span className="font-mono text-emerald-300 font-semibold">{currentUser?.email}</span>
+              <span className="text-slate-400 ml-2">UID: {currentUser?.uid}</span>
             </div>
-            <span className="text-[10px] font-bold text-emerald-300 bg-emerald-500/20 px-2.5 py-1 rounded-full border border-emerald-500/40 w-fit">
-              Droits Firestore Admin Validés
-            </span>
           </div>
-        ) : (
-          <div className="bg-slate-950/90 border border-amber-500/40 rounded-3xl p-5 sm:p-6 shadow-xl space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center font-bold">
-                  <ShieldCheck className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white">Droits Administrateur Firebase pour Firestore</h3>
-                  <p className="text-xs text-slate-400">
-                    {currentUser 
-                      ? `Connecté avec ${currentUser.email || currentUser.uid}. Le compte foosco80@gmail.com est configuré dans les règles Firestore pour autoriser la lecture des vendeurs et la modification des paramètres.`
-                      : 'Authentification Firebase requise pour autoriser la lecture de la liste des vendeurs et la sauvegarde des paramètres globaux dans Firestore.'}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={handleGoogleAdminLogin}
-                disabled={signingInGoogle}
-                className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold px-4 py-2.5 rounded-xl text-xs shadow-md transition-all cursor-pointer disabled:opacity-50 shrink-0"
-              >
-                <ShieldCheck className="w-4 h-4" />
-                <span>{signingInGoogle ? 'Connexion en cours...' : 'Connexion Admin (foosco80@gmail.com)'}</span>
-              </button>
-            </div>
+          <span className="text-[10px] font-bold text-emerald-300 bg-emerald-500/20 px-2.5 py-1 rounded-full border border-emerald-500/40 w-fit">
+            Droits Firestore Admin Validés (isAdmin() = true)
+          </span>
+        </div>
 
-            {diagnosticError && (
-              <div className="bg-rose-950/70 border border-rose-800/60 rounded-xl p-3 text-xs text-rose-300 space-y-1">
-                <div className="font-bold flex items-center gap-1.5 text-rose-200">
-                  <X className="w-3.5 h-3.5 text-rose-400" />
-                  <span>Journal de diagnostic Firestore :</span>
-                </div>
-                <p className="font-mono text-[11px] break-all">{diagnosticError}</p>
-              </div>
-            )}
+        {diagnosticError && (
+          <div className="bg-rose-950/70 border border-rose-800/60 rounded-xl p-3 text-xs text-rose-300 space-y-1">
+            <div className="font-bold flex items-center gap-1.5 text-rose-200">
+              <X className="w-3.5 h-3.5 text-rose-400" />
+              <span>Journal de diagnostic Firestore :</span>
+            </div>
+            <p className="font-mono text-[11px] break-all">{diagnosticError}</p>
           </div>
         )}
 
@@ -796,83 +871,27 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </div>
           </form>
 
-          {/* Dedicated Admin Profile & Security (WhatsApp & PIN) */}
+          {/* Dedicated Admin Profile & Security Information */}
           <div className="mt-6 pt-5 border-t border-slate-700/80">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <KeyRound className="w-4 h-4 text-rose-400" />
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                  Sécurité & Profil Super Admin (Code PIN & WhatsApp Support)
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAdminPinFields(!showAdminPinFields)}
-                className="text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
-              >
-                {showAdminPinFields ? 'Fermer' : 'Modifier le Code PIN'}
-              </button>
+            <div className="flex items-center gap-2 mb-3">
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                Sécurité & Droits d’Accès Super Administrateur
+              </h3>
             </div>
 
-            {showAdminPinFields && (
-              <form onSubmit={handleSaveAdminSecurity} className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-900/80 p-4 rounded-2xl border border-slate-700 mt-2">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                    Code PIN actuel
-                  </label>
-                  <input
-                    type="password"
-                    maxLength={8}
-                    placeholder="••••"
-                    value={adminCurrentPin}
-                    onChange={(e) => setAdminCurrentPin(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-rose-500 font-mono tracking-widest text-center"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                    Nouveau Code PIN (min 4 chiffres)
-                  </label>
-                  <input
-                    type="password"
-                    maxLength={8}
-                    placeholder="Nouveau PIN"
-                    value={adminNewPin}
-                    onChange={(e) => setAdminNewPin(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-rose-500 font-mono tracking-widest text-center"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                    Confirmer le nouveau PIN
-                  </label>
-                  <input
-                    type="password"
-                    maxLength={8}
-                    placeholder="Répéter PIN"
-                    value={adminConfirmPin}
-                    onChange={(e) => setAdminConfirmPin(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-rose-500 font-mono tracking-widest text-center"
-                    required
-                  />
-                </div>
-
-                <div className="sm:col-span-3 flex justify-end pt-1">
-                  <button
-                    type="submit"
-                    disabled={savingAdminSecurity}
-                    className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-md transition-all cursor-pointer disabled:opacity-50"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                    <span>{savingAdminSecurity ? 'Enregistrement...' : 'Valider le nouveau Code PIN'}</span>
-                  </button>
-                </div>
-              </form>
-            )}
+            <div className="bg-slate-900/80 p-4 rounded-2xl border border-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div className="space-y-1">
+                <span className="text-slate-400 text-[11px] block">Compte Administrateur Firebase autorisé :</span>
+                <span className="font-mono text-emerald-300 font-bold">{ADMIN_EMAIL}</span>
+                <span className="block text-[10px] text-slate-500">Rôle : Super Admin (Règles Firestore isAdmin() = true)</span>
+              </div>
+              <div className="space-y-1">
+                <span className="text-slate-400 text-[11px] block">Politique de sécurité & Chiffrement :</span>
+                <span className="text-slate-300">Authentification serveur Firebase native</span>
+                <span className="block text-[10px] text-slate-500">Aucun PIN ni mot de passe stocké en clair. Contrôle strict de users.list & settings.write.</span>
+              </div>
+            </div>
           </div>
         </div>
 

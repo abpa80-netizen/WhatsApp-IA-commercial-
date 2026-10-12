@@ -7,7 +7,8 @@ import {
   AdminData, 
   CurrencyType,
   AuthResponse,
-  PublicStoreProfile
+  PublicStoreProfile,
+  DailyVisitStat
 } from '../types';
 import { FirestoreService, DEFAULT_GLOBAL_SETTINGS } from './firestoreService';
 import { AuthService } from './authService';
@@ -105,8 +106,9 @@ export const ApiService = {
     return await FirestoreService.getGlobalSettings();
   },
 
-  // 2. Update Global Settings
+  // 2. Update Global Settings (Admin only)
   async updateConfig(config: Partial<SystemConfig>): Promise<SystemConfig> {
+    this.ensureAdminUser();
     const updated = await FirestoreService.updateGlobalSettings(config);
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('wca_config_updated', { detail: updated }));
@@ -137,11 +139,24 @@ export const ApiService = {
       throw new Error('Action non autorisée : Vous devez être connecté pour accéder à ces données.');
     }
     // Allow if caller is the document owner OR has admin privilege
-    const isAdmin = auth.currentUser?.email === 'foosco80@gmail.com';
+    const isAdmin = auth.currentUser?.email?.trim().toLowerCase() === 'foosco80@gmail.com';
     if (currentUid !== targetUid && !isAdmin) {
       throw new Error('Accès refusé : Vous ne pouvez pas accéder ni modifier les données d’un autre vendeur.');
     }
     return currentUid;
+  },
+
+  // Admin Authorization Guard: Strictly reserves admin actions to foosco80@gmail.com
+  ensureAdminUser(): string {
+    const user = auth.currentUser;
+    if (!user) {
+      throw new Error('Action non autorisée : Vous devez être connecté avec le compte administrateur pour accéder à ces données.');
+    }
+    const email = user.email?.trim().toLowerCase();
+    if (email !== 'foosco80@gmail.com') {
+      throw new Error('Accès refusé : Seul le compte administrateur autorisé (foosco80@gmail.com) peut exécuter cette action.');
+    }
+    return user.uid;
   },
 
   // 4. Get Vendeur by UID (Full private profile for logged-in merchant or admin)
@@ -225,18 +240,26 @@ export const ApiService = {
     });
   },
 
+  // 10b. Daily visits telemetry for analytics chart
+  async getDailyVisits(vendeur: Vendeur, days: number = 7): Promise<DailyVisitStat[]> {
+    return await FirestoreService.getDailyAnalytics(vendeur, days);
+  },
+
   // 11. Admin: Get Admin Data from Firestore
   async getAdminData(): Promise<AdminData> {
+    this.ensureAdminUser();
     return await FirestoreService.getAdminData();
   },
 
   // 11b. Admin: Purge demo accounts
   async purgeDemoVendors(): Promise<AdminData> {
+    this.ensureAdminUser();
     return await FirestoreService.purgeDemoVendors();
   },
 
   // 12. Admin: Toggle Vendor Active (ON / OFF Switch)
   async toggleVendorActive(vendeurId: string): Promise<Vendeur> {
+    this.ensureAdminUser();
     const current = await FirestoreService.getUserProfile(vendeurId);
     if (!current) throw new Error('Vendeur introuvable');
     const newStatus = current.status === 'Inactif' ? 'Actif' : 'Inactif';
@@ -245,6 +268,7 @@ export const ApiService = {
 
   // 13. Admin: Toggle VIP status
   async toggleVendorVip(vendeurId: string): Promise<Vendeur> {
+    this.ensureAdminUser();
     const current = await FirestoreService.getUserProfile(vendeurId);
     if (!current) throw new Error('Vendeur introuvable');
     const newStatus = current.status === 'VIP' ? 'Actif' : 'VIP';
@@ -257,6 +281,7 @@ export const ApiService = {
   },
 
   async updateVendeurStatus(vendeurId: string, status: Vendeur['status']): Promise<Vendeur | null> {
+    this.ensureAdminUser();
     if (status === 'VIP' || status === 'Gratuit') {
       return this.toggleVendorVip(vendeurId);
     } else {
@@ -277,12 +302,14 @@ export const ApiService = {
 
   // 15. Admin: Delete vendor account
   async deleteVendor(vendeurId: string): Promise<boolean> {
+    this.ensureAdminUser();
     const cleanId = vendeurId.trim();
     return await FirestoreService.deleteUserAccount(cleanId);
   },
 
   // 16. Admin: Update Security
   async updateAdminSecurity(data: { currentPin?: string; newPin?: string; whatsappSupport?: string }): Promise<SystemConfig> {
+    this.ensureAdminUser();
     return await this.updateConfig({
       whatsapp_support: data.whatsappSupport,
       supportWhatsapp: data.whatsappSupport,

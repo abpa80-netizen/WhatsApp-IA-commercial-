@@ -11,6 +11,8 @@ import {
 import { FirestoreService, DEFAULT_GLOBAL_SETTINGS } from './firestoreService';
 import { Vendeur } from '../types';
 
+export const ADMIN_EMAIL = 'foosco80@gmail.com';
+
 /**
  * Normalizes any user-entered WhatsApp phone number into standard international format.
  * Strips non-digits, handles leading trunk zeros, and validates length.
@@ -287,31 +289,101 @@ export const AuthService = {
   },
 
   /**
-   * Auxiliary Google Sign-In (Reserved for administration / Workspace identity if needed)
+   * Verified check whether a user or email is the authorized admin
    */
-  async loginWithGoogle(): Promise<Vendeur> {
+  isAdminUser(user?: FirebaseUser | null): boolean {
+    const u = user || auth.currentUser;
+    return Boolean(u && u.email && u.email.trim().toLowerCase() === 'foosco80@gmail.com');
+  },
+
+  /**
+   * Super Admin Firebase Google Authentication (Strictly for foosco80@gmail.com)
+   */
+  async loginAdminWithGoogle(): Promise<FirebaseUser> {
     const result = await signInWithPopup(auth, googleProvider);
     const user = result.user;
-    let profile = await FirestoreService.getUserProfile(user.uid);
+    const email = user.email?.trim().toLowerCase();
 
+    if (email !== 'foosco80@gmail.com') {
+      await signOut(auth);
+      throw new Error(`Accès refusé : Le compte Google (${user.email || 'inconnu'}) n’est pas autorisé. Seul le compte foosco80@gmail.com a les droits administrateur.`);
+    }
+
+    // Ensure admin document exists in Firestore
+    let profile = await FirestoreService.getUserProfile(user.uid);
     if (!profile) {
       const now = new Date().toISOString();
-      const isAdminEmail = user.email === 'foosco80@gmail.com';
-      profile = await FirestoreService.saveUserProfile(user.uid, {
+      await FirestoreService.saveUserProfile(user.uid, {
         uid: user.uid,
         id: user.uid,
         phone: user.phoneNumber || '+212600000000',
         whatsappNumber: user.phoneNumber || '+212600000000',
         phoneNormalized: (user.phoneNumber || '').replace(/\D/g, ''),
-        name: user.displayName || 'Administrateur',
-        role: isAdminEmail ? 'admin' : 'seller',
+        name: user.displayName || 'Super Administrateur',
+        role: 'admin',
         status: 'Actif',
         plan: 'VIP',
         createdAt: now,
       });
     }
 
-    return profile;
+    return user;
+  },
+
+  /**
+   * Super Admin Firebase Email/Password Authentication (Strictly for foosco80@gmail.com)
+   * Validated server-side by Firebase Authentication. Never bypasses.
+   */
+  async loginAdminWithPassword(password: string): Promise<FirebaseUser> {
+    if (!password || password.trim().length === 0) {
+      throw new Error('Veuillez saisir votre mot de passe administrateur.');
+    }
+
+    let userCred;
+    try {
+      userCred = await signInWithEmailAndPassword(auth, 'foosco80@gmail.com', password.trim());
+    } catch (err: any) {
+      if (err?.code === 'auth/wrong-password' || err?.code === 'auth/invalid-credential') {
+        throw new Error('Mot de passe administrateur incorrect.');
+      }
+      if (err?.code === 'auth/user-not-found') {
+        throw new Error('Aucun compte administrateur trouvé pour foosco80@gmail.com. Vous pouvez utiliser la connexion Google autorisée.');
+      }
+      if (err?.code === 'auth/too-many-requests') {
+        throw new Error('Trop de tentatives infructueuses. Veuillez patienter quelques minutes.');
+      }
+      throw new Error(err?.message || 'Erreur d’authentification administrateur.');
+    }
+
+    const user = userCred.user;
+    if (user.email?.trim().toLowerCase() !== 'foosco80@gmail.com') {
+      await signOut(auth);
+      throw new Error('Accès refusé : Seul le compte foosco80@gmail.com est autorisé.');
+    }
+
+    return user;
+  },
+
+  /**
+   * Auxiliary Google Sign-In (Reserved for administration / Workspace identity if needed)
+   */
+  async loginWithGoogle(): Promise<Vendeur> {
+    const user = await this.loginAdminWithGoogle();
+    const profile = await FirestoreService.getUserProfile(user.uid);
+    return profile || {
+      id: user.uid,
+      uid: user.uid,
+      phone: user.phoneNumber || '+212600000000',
+      whatsappNumber: user.phoneNumber || '+212600000000',
+      phoneNormalized: (user.phoneNumber || '').replace(/\D/g, ''),
+      name: user.displayName || 'Super Administrateur',
+      role: 'admin',
+      status: 'Actif',
+      plan: 'VIP',
+      currency: 'MAD',
+      is_active: true,
+      createdAt: new Date().toISOString(),
+    } as Vendeur;
   },
 
   /**
