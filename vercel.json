@@ -22,7 +22,7 @@
       "headers": [
         {
           "key": "Content-Type",
-          "value": "application/manifest+json; charset=utf-8"
+          "value": "application/manifest+json"
         },
         {
           "key": "Access-Control-Allow-Origin",
@@ -30,7 +30,24 @@
         },
         {
           "key": "Cache-Control",
-          "value": "public, max-age=0, must-revalidate"
+          "value": "no-cache, no-store, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/manifest.webmanifest",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/manifest+json"
+        },
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
         }
       ]
     }
@@ -41,7 +58,7 @@
       "destination": "/api/cloudinary/sign"
     },
     {
-      "source": "/((?!api/|sw\\.js|manifest\\.json|.*\\.(?:png|jpg|jpeg|gif|svg|ico|json|js|css|webp|woff2?)).*)",
+      "source": "/((?!api/|sw\\.js|manifest\\.json|manifest\\.webmanifest|.*\\.(?:png|jpg|jpeg|gif|svg|ico|json|js|css|webp|woff2?)).*)",
       "destination": "/index.html"
     }
   ]

@@ -218,6 +218,14 @@ export const FirestoreService = {
 
       await setDoc(doc(db, 'users', uid), payload, { merge: true });
       const updated = await this.getUserProfile(uid);
+      if (updated) {
+        // Automatically synchronize the isolated public profile at publicStores/{uid}
+        try {
+          await this.syncPublicStore(uid, updated);
+        } catch (syncErr) {
+          console.warn(`[FirestoreService] Background sync to publicStores/${uid} failed:`, syncErr);
+        }
+      }
       return updated!;
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, docPath);
@@ -225,7 +233,8 @@ export const FirestoreService = {
   },
 
   // ----------------------------------------------------
-  // 2b. PUBLIC STORE PROFILE (Strictly Sanitized: No private login phone, no CRM, no auth data)
+  // 2b. PUBLIC STORE PROFILE (/publicStores/{uid})
+  // Strictly Sanitized: No private login phone, no CRM, no auth data, no internal subscription timestamps
   // ----------------------------------------------------
   sanitizePublicStore(uid: string, d: Record<string, any>): PublicStoreProfile {
     // COMMERCIAL CONTACT IS ONLY EXPOSED IF EXPLICITLY PROVIDED AND ALLOWED:
@@ -264,25 +273,63 @@ export const FirestoreService = {
     };
   },
 
+  /**
+   * Synchronizes a vendor's sanitized public information into the dedicated /publicStores/{uid} document.
+   * Ensures zero private credentials or internal subscription secrets are exposed.
+   */
+  async syncPublicStore(uid: string, userDoc: Record<string, any>): Promise<PublicStoreProfile> {
+    const docPath = `publicStores/${uid}`;
+    try {
+      const sanitized = this.sanitizePublicStore(uid, userDoc);
+      const payload: Record<string, any> = {
+        id: uid,
+        name: sanitized.name,
+        slogan: sanitized.slogan,
+        location: sanitized.location,
+        logo: sanitized.logo,
+        currency: sanitized.currency,
+        status: sanitized.status,
+        plan: sanitized.plan,
+        trialEndsAt: sanitized.trialEndsAt || null,
+        vipEndsAt: sanitized.vipEndsAt || null,
+        is_active: sanitized.is_active,
+        publicSlug: sanitized.publicSlug,
+        orderWhatsApp: sanitized.orderWhatsApp || null,
+        allowCommercialContact: Boolean(sanitized.allowCommercialContact),
+        updatedAt: new Date().toISOString(),
+      };
+
+      await setDoc(doc(db, 'publicStores', uid), payload, { merge: true });
+      return sanitized;
+    } catch (err) {
+      console.warn(`[FirestoreService] Erreur lors de la synchronisation de publicStores/${uid}:`, err);
+      return this.sanitizePublicStore(uid, userDoc);
+    }
+  },
+
+  /**
+   * Reads public store profile from dedicated /publicStores/{uid} or by publicSlug.
+   * Includes graceful fallback for pre-migration legacy stores.
+   */
   async getPublicStoreProfile(uidOrSlug: string): Promise<PublicStoreProfile | null> {
     const cleanId = uidOrSlug.trim();
     if (!cleanId) return null;
 
-    // 1. Try direct lookup by UID
+    // 1. Direct lookup in publicStores/{cleanId} (Public Collection)
     try {
-      const snap = await getDoc(doc(db, 'users', cleanId));
+      const snap = await getDoc(doc(db, 'publicStores', cleanId));
       if (snap.exists()) {
         const d = snap.data();
         return this.sanitizePublicStore(cleanId, d);
       }
     } catch {
-      // Continue to query by publicSlug
+      // Continue to query by publicSlug or fallback
     }
 
-    // 2. Lookup by publicSlug query
+    // 2. Lookup in publicStores by publicSlug query
     try {
       const q = query(
-        collection(db, 'users'),
+        collection(db, 'publicStores'),
         where('publicSlug', '==', cleanId),
         limit(1)
       );
@@ -291,11 +338,70 @@ export const FirestoreService = {
         const docSnap = querySnap.docs[0];
         return this.sanitizePublicStore(docSnap.id, docSnap.data());
       }
-    } catch (err) {
-      console.warn('Error querying public store by slug:', err);
+    } catch {
+      // Continue to migration fallback
+    }
+
+    // 3. Migration grace period fallback:
+    // If the vendor has not yet been synced to publicStores, attempt to fetch from users/{cleanId}
+    // and automatically populate publicStores so all future requests hit the public collection.
+    try {
+      const snapUser = await getDoc(doc(db, 'users', cleanId));
+      if (snapUser.exists()) {
+        const d = snapUser.data();
+        const sanitized = this.sanitizePublicStore(cleanId, d);
+        this.syncPublicStore(cleanId, d).catch(() => {});
+        return sanitized;
+      }
+    } catch {
+      // users collection is protected by security rules for non-owners/non-admins
+    }
+
+    try {
+      const qUser = query(
+        collection(db, 'users'),
+        where('publicSlug', '==', cleanId),
+        limit(1)
+      );
+      const querySnapUser = await getDocs(qUser);
+      if (!querySnapUser.empty) {
+        const docSnap = querySnapUser.docs[0];
+        const sanitized = this.sanitizePublicStore(docSnap.id, docSnap.data());
+        this.syncPublicStore(docSnap.id, docSnap.data()).catch(() => {});
+        return sanitized;
+      }
+    } catch {
+      // Fallback exhausted
     }
 
     return null;
+  },
+
+  /**
+   * Non-destructive migration of all existing merchants from users/ to publicStores/.
+   * Strictly preserves existing data while creating the sanitized public store docs.
+   */
+  async migrateAllVendorsToPublicStores(): Promise<{ total: number; migrated: number; errors: number }> {
+    try {
+      const snap = await getDocs(collection(db, 'users'));
+      let migrated = 0;
+      let errors = 0;
+
+      for (const d of snap.docs) {
+        try {
+          await this.syncPublicStore(d.id, d.data());
+          migrated++;
+        } catch (e) {
+          console.error(`[FirestoreService] Migration error for user ${d.id}:`, e);
+          errors++;
+        }
+      }
+
+      return { total: snap.size, migrated, errors };
+    } catch (err) {
+      console.error('[FirestoreService] Migration batch failed:', err);
+      return { total: 0, migrated: 0, errors: 1 };
+    }
   },
 
   // ----------------------------------------------------
@@ -695,7 +801,13 @@ export const FirestoreService = {
       } catch (e) {
         console.warn(`[FirestoreService] Could not clean prospects for ${uid}:`, e);
       }
-      // 3. Delete user document
+      // 3. Delete publicStores document
+      try {
+        await deleteDoc(doc(db, 'publicStores', uid));
+      } catch (e) {
+        console.warn(`[FirestoreService] Could not clean publicStore for ${uid}:`, e);
+      }
+      // 4. Delete user document
       await deleteDoc(doc(db, 'users', uid));
       return true;
     } catch (err) {
@@ -712,6 +824,18 @@ export const FirestoreService = {
         if (id.startsWith('DEMO-') || id === 'VEND-000' || id.includes('demo') || id.includes('test-example')) {
           await this.deleteUserAccount(id);
         }
+      }
+      // Clean up publicStores demo documents
+      try {
+        const publicSnap = await getDocs(collection(db, 'publicStores'));
+        for (const pd of publicSnap.docs) {
+          const pid = pd.id;
+          if (pid.startsWith('DEMO-') || pid === 'VEND-000' || pid.includes('demo') || pid.includes('test-example')) {
+            await deleteDoc(pd.ref);
+          }
+        }
+      } catch (pe) {
+        console.warn('[FirestoreService] Could not clean demo publicStores:', pe);
       }
       return await this.getAdminData();
     } catch (err) {

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Download, Smartphone, X, Check, Share, PlusSquare, Activity, AlertTriangle, Info, RefreshCw, ExternalLink } from 'lucide-react';
+import { Download, Smartphone, X, Check, Share, PlusSquare, Activity, AlertTriangle, Info, RefreshCw } from 'lucide-react';
 
 export interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -53,6 +53,15 @@ if (typeof window !== 'undefined') {
     }
   });
 
+  // Register in early inline listeners queue if available
+  if (Array.isArray(window.__PWA_PROMPT_LISTENERS__)) {
+    window.__PWA_PROMPT_LISTENERS__.push((e) => {
+      capturedInstallPrompt = e;
+      window.__PWA_PROMPT__ = e;
+      promptListeners.forEach((listener) => listener(e));
+    });
+  }
+
   // Early Service Worker registration in production on Vercel
   if ('serviceWorker' in navigator && !isAiStudioPreview) {
     const registerSW = () => {
@@ -77,6 +86,8 @@ export interface PWADiagnostics {
   manifestName: string | null;
   manifestShortName: string | null;
   manifestDisplay: string | null;
+  iconsStatus: 'valid' | 'invalid' | 'checking' | 'error';
+  iconsCount: number;
   isStandalone: boolean;
   isSecureContext: boolean;
   isWebView: boolean;
@@ -100,6 +111,8 @@ export function usePWASelective(enabled: boolean) {
     manifestName: null,
     manifestShortName: null,
     manifestDisplay: null,
+    iconsStatus: 'checking',
+    iconsCount: 0,
     isStandalone: false,
     isSecureContext: typeof window !== 'undefined' ? window.isSecureContext : true,
     isWebView: false,
@@ -167,11 +180,13 @@ export function usePWASelective(enabled: boolean) {
       swState = 'unsupported';
     }
 
-    // Manifest validation
+    // Manifest & Icons validation
     let mStatus: PWADiagnostics['manifestStatus'] = 'checking';
     let mName: string | null = null;
     let mShortName: string | null = null;
     let mDisplay: string | null = null;
+    let iStatus: PWADiagnostics['iconsStatus'] = 'checking';
+    let iCount = 0;
 
     try {
       const res = await fetch('/manifest.json', { cache: 'no-cache' });
@@ -181,11 +196,27 @@ export function usePWASelective(enabled: boolean) {
         mName = data.name || null;
         mShortName = data.short_name || null;
         mDisplay = data.display || null;
+
+        if (Array.isArray(data.icons) && data.icons.length > 0) {
+          iCount = data.icons.length;
+          const checks = await Promise.allSettled(
+            data.icons.map(async (icon: { src: string }) => {
+              const iconRes = await fetch(icon.src, { method: 'HEAD', cache: 'no-cache' });
+              return iconRes.ok;
+            })
+          );
+          const allOk = checks.every((c) => c.status === 'fulfilled' && c.value === true);
+          iStatus = allOk ? 'valid' : 'error';
+        } else {
+          iStatus = 'error';
+        }
       } else {
         mStatus = 'error';
+        iStatus = 'error';
       }
     } catch {
       mStatus = 'error';
+      iStatus = 'error';
     }
 
     // Determine reason if beforeinstallprompt is not available on Android
@@ -198,10 +229,12 @@ export function usePWASelective(enabled: boolean) {
       reason = 'L’application n’est pas servie sous un contexte sécurisé HTTPS valide.';
     } else if (mStatus !== 'valid') {
       reason = 'Le fichier manifest.json n’a pas pu être chargé ou est invalide.';
+    } else if (iStatus !== 'valid') {
+      reason = 'Une ou plusieurs icônes PWA déclarées dans le manifest ne sont pas accessibles.';
     } else if (!isAiStudioPreview && swState !== 'active') {
       reason = 'Le Service Worker n’est pas encore actif ou en cours d’activation.';
     } else if (!hasPrompt && isAndroidDevice) {
-      reason = 'L’événement beforeinstallprompt n’a pas encore été déclenché par Chrome. Causes fréquentes : l’invitation a déjà été fermée récemment (temporisation Chrome), ou l’application est déjà enregistrée dans le système.';
+      reason = 'L’événement beforeinstallprompt n’a pas encore été déclenché par Chrome. Causes fréquentes : l’invitation a déjà été fermée récemment (délai de temporisation automatique Chrome), ou l’application est déjà enregistrée dans le système Android.';
     }
 
     setDiagnostics({
@@ -213,6 +246,8 @@ export function usePWASelective(enabled: boolean) {
       manifestName: mName,
       manifestShortName: mShortName,
       manifestDisplay: mDisplay,
+      iconsStatus: iStatus,
+      iconsCount: iCount,
       isStandalone: installedStatus,
       isSecureContext: window.isSecureContext,
       isWebView: isWebViewDevice,
@@ -268,7 +303,7 @@ export function usePWASelective(enabled: boolean) {
 
     // Register Service Worker in Merchant / Admin mode if not already registered
     if ('serviceWorker' in navigator && !isAiStudioPreview) {
-      navigator.serviceWorker.register('/sw.js').catch((err) => {
+      navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch((err) => {
         console.warn('[SW Registration error]', err);
       });
     }
@@ -302,7 +337,7 @@ export function usePWASelective(enabled: boolean) {
   }, [enabled, runDiagnostics]);
 
   const install = async (): Promise<boolean> => {
-    const promptToUse = deferredPrompt || window.__PWA_PROMPT__ || capturedInstallPrompt;
+    const promptToUse = deferredPrompt || (typeof window !== 'undefined' ? window.__PWA_PROMPT__ : null) || capturedInstallPrompt;
     if (!promptToUse) {
       runDiagnostics();
       return false;
@@ -314,7 +349,9 @@ export function usePWASelective(enabled: boolean) {
         setIsInstalled(true);
         setDeferredPrompt(null);
         capturedInstallPrompt = null;
-        window.__PWA_PROMPT__ = null;
+        if (typeof window !== 'undefined') {
+          window.__PWA_PROMPT__ = null;
+        }
         promptListeners.forEach((l) => l(null));
         return true;
       }
@@ -364,14 +401,13 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({ enabled }) =
       // Native direct install dialog via beforeinstallprompt
       await install();
     } else if (isAndroid) {
-      // when beforeinstallprompt is NOT available: DO NOT automatically open manual guide.
-      // Show explicit diagnostics explaining why native dialog cannot be triggered,
-      // with clear causes and option to consult manual steps.
-      await runDiagnostics();
-      setShowDiagnosticsModal(true);
+      // When beforeinstallprompt is not yet available: show Android instructions modal
+      setShowAndroidModal(true);
     } else if (isIOS) {
       // iOS Safari: show Share -> Add to Home Screen instructions
       setShowIOSModal(true);
+    } else {
+      setShowAndroidModal(true);
     }
   };
 
@@ -389,14 +425,6 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({ enabled }) =
         <>
           <Share className="w-3.5 h-3.5" />
           <span>Installer sur iPhone / iPad</span>
-        </>
-      );
-    }
-    if (isInstallable) {
-      return (
-        <>
-          <Download className="w-3.5 h-3.5" />
-          <span>Installer l'application</span>
         </>
       );
     }
@@ -529,6 +557,15 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({ enabled }) =
               </div>
 
               <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                <span className="font-medium text-slate-700">Icônes PWA (192 & 512) :</span>
+                <span className={`font-bold ${diagnostics.iconsStatus === 'valid' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  {diagnostics.iconsStatus === 'valid' && `✅ ${diagnostics.iconsCount} icônes valides (200 OK)`}
+                  {diagnostics.iconsStatus === 'checking' && '⏳ Vérification...'}
+                  {diagnostics.iconsStatus === 'error' && '❌ Erreur sur une icône'}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
                 <span className="font-medium text-slate-700">Navigateur détecté :</span>
                 <span className="font-semibold text-slate-800">{diagnostics.browserName}</span>
               </div>
@@ -600,7 +637,7 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({ enabled }) =
         </div>
       )}
 
-      {/* Android Manual Guide Modal (Accessible when requested by user) */}
+      {/* Android Manual Guide Modal (Accessible when prompt is not yet ready or via diagnostic) */}
       {showAndroidModal && (
         <div 
           id="pwa-android-modal"
@@ -654,13 +691,27 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({ enabled }) =
               </div>
             </div>
 
-            <button
-              id="btn-close-android-modal"
-              onClick={() => setShowAndroidModal(false)}
-              className="w-full bg-slate-900 text-white font-bold py-2.5 rounded-xl text-xs hover:bg-slate-800 transition-colors cursor-pointer"
-            >
-              Compris
-            </button>
+            <div className="space-y-2">
+              <button
+                id="btn-close-android-modal"
+                onClick={() => setShowAndroidModal(false)}
+                className="w-full bg-slate-900 text-white font-bold py-2.5 rounded-xl text-xs hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                Compris
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAndroidModal(false);
+                  runDiagnostics();
+                  setShowDiagnosticsModal(true);
+                }}
+                className="w-full text-slate-500 hover:text-slate-800 text-[11px] font-medium py-1.5 transition-colors cursor-pointer text-center"
+              >
+                Voir le diagnostic technique détaillé
+              </button>
+            </div>
           </div>
         </div>
       )}

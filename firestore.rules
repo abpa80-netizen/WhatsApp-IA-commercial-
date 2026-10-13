@@ -42,10 +42,10 @@ service cloud.firestore {
       ]);
     }
 
-    // 1. Users collection (Vendeurs & Admins)
+    // 1. Users collection (Vendeurs & Admins) - STRICTEMENT PRIVÉ
     match /users/{uid} {
-      // Public can read seller storefront info for catalog display
-      allow get: if true;
+      // Private profile: ONLY readable by authenticated owner or authorized admin
+      allow get: if isOwner(uid) || isAdmin();
       allow list: if isAdmin();
 
       // Create: User can create their own document
@@ -90,6 +90,40 @@ service cloud.firestore {
         // Strictly private CRM: Only the vendor owner can read or write
         allow read, write: if isOwner(uid) || isAdmin();
       }
+    }
+
+    // 2. Public Stores collection (/publicStores/{uid}) - PROFIL PUBLIC DÉDIÉ
+    match /publicStores/{uid} {
+      // Public can read seller storefront info for catalog display & searching by slug
+      allow get: if true;
+      allow list: if true;
+
+      // Create: Owner or admin can create the public storefront profile
+      // Seller cannot self-assign VIP status, VIP plan, or VIP dates
+      allow create: if (
+        isOwner(uid) && 
+        request.resource.data.id == uid &&
+        (
+          isAdmin() ||
+          (
+            (!('status' in request.resource.data) || request.resource.data.status in ['Actif', 'Essai', 'Gratuit']) &&
+            (!('plan' in request.resource.data) || request.resource.data.plan in ['Essai', 'Gratuit']) &&
+            !('vipStartedAt' in request.resource.data) &&
+            !('vipEndsAt' in request.resource.data)
+          )
+        )
+      ) || isAdmin();
+
+      // Update: Owner can update ordinary public fields (name, logo, slogan, location, currency, publicSlug, orderWhatsApp, allowCommercialContact)
+      // but CANNOT modify any sensitive subscription fields.
+      allow update: if (
+        isOwner(uid) && 
+        request.resource.data.id == uid && 
+        !hasSensitiveSubscriptionFields()
+      ) || isAdmin();
+
+      // Delete: Only owner or admin can delete public storefront
+      allow delete: if isOwner(uid) || isAdmin();
     }
 
     // 4. Global Settings: Read by all, modified only by admin

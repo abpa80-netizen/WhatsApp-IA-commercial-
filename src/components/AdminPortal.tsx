@@ -601,6 +601,21 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     }
   };
 
+  const [migrating, setMigrating] = useState(false);
+
+  const handleMigratePublicStores = async () => {
+    setMigrating(true);
+    try {
+      const res = await ApiService.migratePublicStores();
+      showToast(`Migration terminée : ${res.migrated}/${res.total} boutiques synchronisées vers /publicStores (profils publics sécurisés).`, 'success');
+      await fetchAdminData(false);
+    } catch {
+      showToast('Erreur lors de la migration des boutiques publiques', 'error');
+    } finally {
+      setMigrating(false);
+    }
+  };
+
   const handlePurgeAllDemoVendors = async () => {
     try {
       const updated = await ApiService.purgeDemoVendors();
@@ -1231,6 +1246,17 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
             {/* Filter buttons & Demo Purge action */}
             <div className="flex items-center gap-2 overflow-x-auto">
+              <button
+                type="button"
+                onClick={handleMigratePublicStores}
+                disabled={migrating}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/40 transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+                title="Synchronise tous les vendeurs vers la structure publique dédiée /publicStores"
+              >
+                <RotateCw className={`w-3.5 h-3.5 ${migrating ? 'animate-spin' : ''}`} />
+                <span>{migrating ? 'Migration...' : 'Synchroniser /publicStores'}</span>
+              </button>
+
               <button
                 type="button"
                 onClick={handlePurgeAllDemoVendors}

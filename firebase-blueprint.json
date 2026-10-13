@@ -61,6 +61,29 @@
       },
       "required": ["id", "vendeur_id", "name", "phone", "status"]
     },
+    "PublicStore": {
+      "title": "PublicStore",
+      "description": "Profil public vitrine exposé aux visiteurs du catalogue (sans données privées)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "UID Firebase du vendeur propriétaire" },
+        "name": { "type": "string", "description": "Nom commercial public de la boutique", "maxLength": 100 },
+        "slogan": { "type": "string", "description": "Slogan commercial", "maxLength": 200 },
+        "location": { "type": "string", "description": "Localisation publique", "maxLength": 100 },
+        "logo": { "type": "string", "description": "URL du logo de la boutique", "maxLength": 1024 },
+        "currency": { "type": "string", "enum": ["MAD", "CFA"], "description": "Devise de la boutique" },
+        "status": { "type": "string", "description": "Statut public du compte" },
+        "plan": { "type": "string", "description": "Offre commerciale (VIP, Gratuit, Essai)" },
+        "trialEndsAt": { "type": "string", "description": "Date ISO d'expiration de l'essai" },
+        "vipEndsAt": { "type": "string", "description": "Date ISO d'expiration VIP" },
+        "is_active": { "type": "boolean", "description": "Boutique active ou non" },
+        "publicSlug": { "type": "string", "description": "Slug d'accès public", "maxLength": 64 },
+        "orderWhatsApp": { "type": "string", "description": "Numéro commercial de commande consenti", "maxLength": 32 },
+        "allowCommercialContact": { "type": "boolean", "description": "Consentement explicite du contact commercial" },
+        "updatedAt": { "type": "string", "description": "Date ISO de mise à jour" }
+      },
+      "required": ["id", "name", "currency", "publicSlug", "updatedAt"]
+    },
     "GlobalSettings": {
       "title": "GlobalSettings",
       "description": "Paramètres globaux de la plateforme SaaS WhatsApp Commercial AI",
@@ -92,7 +115,11 @@
   "firestore": {
     "/users/{uid}": {
       "schema": { "$ref": "#/entities/User" },
-      "description": "Comptes vendeurs et administrateurs"
+      "description": "Comptes vendeurs et administrateurs (profil privé)"
+    },
+    "/publicStores/{uid}": {
+      "schema": { "$ref": "#/entities/PublicStore" },
+      "description": "Informations publiques du catalogue et de la vitrine vendeur"
     },
     "/users/{uid}/products/{productId}": {
       "schema": { "$ref": "#/entities/Product" },

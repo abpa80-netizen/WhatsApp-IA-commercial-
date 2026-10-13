@@ -1,10 +1,12 @@
 // Service Worker pour WhatsApp Commercial AI (Espace Vendeur & Admin)
-const CACHE_NAME = 'wca-vendeur-v1';
+const CACHE_NAME = 'wca-vendeur-v2';
 const STATIC_ASSETS = [
   '/',
   '/?source=pwa',
   '/manifest.json',
+  '/manifest.webmanifest',
   '/pwa-192x192.png',
+  '/pwa-maskable-192x192.png',
   '/pwa-512x512.png',
   '/pwa-maskable-512x512.png',
   '/apple-touch-icon.png',
@@ -13,10 +15,15 @@ const STATIC_ASSETS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS).catch((err) => {
-        console.warn('[SW] Pre-cache warning:', err);
-      });
+    caches.open(CACHE_NAME).then(async (cache) => {
+      // Robust individual asset caching so one failure doesn't invalidate offline capability
+      await Promise.allSettled(
+        STATIC_ASSETS.map((asset) =>
+          cache.add(asset).catch((err) => {
+            console.warn('[SW] Pre-cache non-blocking warning for', asset, err);
+          })
+        )
+      );
     }).then(() => self.skipWaiting())
   );
 });
@@ -46,7 +53,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Stale-while-revalidate for static assets
+  // Stale-while-revalidate for static assets & offline fallback for navigation
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       const fetchPromise = fetch(event.request).then((networkResponse) => {
@@ -58,9 +65,11 @@ self.addEventListener('fetch', (event) => {
         }
         return networkResponse;
       }).catch(() => {
-        // Offline fallback to index.html for navigation requests
+        // Offline fallback for navigation requests to ensure Chrome installability check passes
         if (event.request.mode === 'navigate') {
-          return caches.match('/index.html') || caches.match('/');
+          return caches.match('/?source=pwa')
+            .then((res) => res || caches.match('/'))
+            .then((res) => res || caches.match('/index.html'));
         }
       });
 

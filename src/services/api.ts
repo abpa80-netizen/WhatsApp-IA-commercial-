@@ -172,6 +172,12 @@ export const ApiService = {
     return await FirestoreService.getPublicStoreProfile(cleanId);
   },
 
+  // 4c. Admin Migration: Synchronize all existing merchants to publicStores/
+  async migratePublicStores(): Promise<{ total: number; migrated: number; errors: number }> {
+    this.ensureAdminUser();
+    return await FirestoreService.migrateAllVendorsToPublicStores();
+  },
+
   // 5. Update Branding
   async updateBranding(vendeurId: string, data: Partial<Vendeur>): Promise<Vendeur> {
     const cleanId = vendeurId.trim();
