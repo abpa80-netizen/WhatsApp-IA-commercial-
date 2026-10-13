@@ -58,10 +58,14 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
   }, [selectedProduct]);
 
   // Determine product limit:
-  // - VIP with valid subscription OR unexpired Premium Trial: display ALL publishable products
-  // - Free mode (or expired trial): strictly limit public display to 4 products
+  // - Priority 1: minimal public activation flag 'hasFullCatalog' (no private dates exposed)
+  // - Priority 2: merchant preview fallback evaluating full private Vendeur object
   const isFullCatalogAllowed = () => {
-    const isVip = vendeur.status === 'VIP' || (vendeur as any).plan === 'VIP';
+    if ('hasFullCatalog' in (vendeur as any) && typeof (vendeur as any).hasFullCatalog === 'boolean') {
+      return Boolean((vendeur as any).hasFullCatalog);
+    }
+
+    const isVip = (vendeur as any).status === 'VIP' || (vendeur as any).plan === 'VIP';
     if (isVip) {
       const vipEnd = (vendeur as any).vipEndsAt;
       if (!vipEnd) return true;
@@ -69,7 +73,7 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
     }
 
     const plan = (vendeur as any).plan;
-    if (plan === 'Gratuit' || vendeur.status === 'Gratuit') {
+    if (plan === 'Gratuit' || (vendeur as any).status === 'Gratuit') {
       return false;
     }
 
@@ -79,8 +83,8 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
       if (isValid) return true;
     }
 
-    // 4. Active account without explicit Gratuit: consider trial active during first 14 days
-    if (vendeur.status === 'Actif' && plan !== 'Gratuit') {
+    // Active account without explicit Gratuit: consider trial active during first 14 days
+    if ((vendeur as any).status === 'Actif' && plan !== 'Gratuit') {
       const created = (vendeur as any).trialStartedAt || (vendeur as any).created_at || (vendeur as any).createdAt;
       if (created) {
         const ageDays = (Date.now() - new Date(created).getTime()) / 86400000;

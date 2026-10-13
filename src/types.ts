@@ -11,14 +11,15 @@ export interface PublicStoreProfile {
   location: string;
   logo: string;
   currency: CurrencyType;
-  status: VendeurStatus;
-  plan?: string;
-  trialEndsAt?: string;
-  vipEndsAt?: string;
+  status?: VendeurStatus;
   is_active?: boolean;
+  hasFullCatalog?: boolean; // Minimal activation state: true if full catalog is allowed, false if limited to 4 products
   publicSlug: string;
   orderWhatsApp?: string; // Optional commercial contact for WhatsApp checkout if explicitly provided AND allowed
   allowCommercialContact?: boolean;
+  plan?: string;
+  trialEndsAt?: string;
+  vipEndsAt?: string;
 }
 
 export interface Vendeur {

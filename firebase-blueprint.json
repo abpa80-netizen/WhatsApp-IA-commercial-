@@ -63,7 +63,7 @@
     },
     "PublicStore": {
       "title": "PublicStore",
-      "description": "Profil public vitrine exposé aux visiteurs du catalogue (sans données privées)",
+      "description": "Profil public vitrine exposé aux visiteurs du catalogue (sans données privées ni dates d'abonnement)",
       "type": "object",
       "properties": {
         "id": { "type": "string", "description": "UID Firebase du vendeur propriétaire" },
@@ -72,11 +72,8 @@
         "location": { "type": "string", "description": "Localisation publique", "maxLength": 100 },
         "logo": { "type": "string", "description": "URL du logo de la boutique", "maxLength": 1024 },
         "currency": { "type": "string", "enum": ["MAD", "CFA"], "description": "Devise de la boutique" },
-        "status": { "type": "string", "description": "Statut public du compte" },
-        "plan": { "type": "string", "description": "Offre commerciale (VIP, Gratuit, Essai)" },
-        "trialEndsAt": { "type": "string", "description": "Date ISO d'expiration de l'essai" },
-        "vipEndsAt": { "type": "string", "description": "Date ISO d'expiration VIP" },
-        "is_active": { "type": "boolean", "description": "Boutique active ou non" },
+        "is_active": { "type": "boolean", "description": "Boutique active ou suspendue" },
+        "hasFullCatalog": { "type": "boolean", "description": "Accès au catalogue complet ou restreint à 4 produits" },
         "publicSlug": { "type": "string", "description": "Slug d'accès public", "maxLength": 64 },
         "orderWhatsApp": { "type": "string", "description": "Numéro commercial de commande consenti", "maxLength": 32 },
         "allowCommercialContact": { "type": "boolean", "description": "Consentement explicite du contact commercial" },

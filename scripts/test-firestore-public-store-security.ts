@@ -258,9 +258,9 @@ runTest('8. Sanitisation stricte : AUCUN numéro WhatsApp de connexion privé da
     currency: 'MAD',
     status: 'Actif',
     plan: 'Essai',
-    trialStartedAt: '2026-10-01T10:00:00.000Z',
-    trialEndsAt: '2026-10-08T10:00:00.000Z',
-    date_expiration_essai: '2026-10-08T10:00:00.000Z',
+    trialStartedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+    trialEndsAt: new Date(Date.now() + 12 * 86400000).toISOString(),
+    date_expiration_essai: new Date(Date.now() + 12 * 86400000).toISOString(),
     role: 'seller',
     publicSlug: 'boutique-royale',
     useLoginNumberAsPublic: false, // Pas de consentement
@@ -273,8 +273,11 @@ runTest('8. Sanitisation stricte : AUCUN numéro WhatsApp de connexion privé da
   assert.strictEqual((publicStore as any).whatsappNumber, undefined, 'whatsappNumber de connexion doit être absent');
   assert.strictEqual((publicStore as any).phoneNormalized, undefined, 'phoneNormalized doit être absent');
   assert.strictEqual((publicStore as any).trialStartedAt, undefined, 'trialStartedAt doit être absent');
+  assert.strictEqual((publicStore as any).trialEndsAt, undefined, 'trialEndsAt interne doit être absent');
   assert.strictEqual((publicStore as any).date_expiration_essai, undefined, 'date_expiration_essai interne doit être absent');
+  assert.strictEqual((publicStore as any).plan, undefined, 'Le nom de plan interne doit être absent du profil public');
   assert.strictEqual((publicStore as any).role, undefined, 'Le rôle de sécurité doit être absent');
+  assert.strictEqual(publicStore.hasFullCatalog, true, 'hasFullCatalog doit être un booléen calculé (essai en cours)');
   assert.strictEqual(publicStore.orderWhatsApp, undefined, 'orderWhatsApp doit être undefined si non consenti');
   assert.strictEqual(publicStore.allowCommercialContact, false);
 });
@@ -300,6 +303,26 @@ runTest('9. Le contact commercial est inclus UNIQUEMENT si le vendeur a explicit
   assert.strictEqual(storeB.orderWhatsApp, '+212688990011', 'Le contact commercial dédié est publié');
   assert.strictEqual(storeB.allowCommercialContact, true);
   assert.strictEqual((storeB as any).whatsappNumber, undefined, 'Le numéro privé reste strictement masqué');
+});
+
+runTest('9b. hasFullCatalog est calculé précisément sans exposer les dates d’abonnement', () => {
+  // Vendeur gratuit : hasFullCatalog = false (limite à 4 produits)
+  const freeSeller = {
+    status: 'Gratuit',
+    plan: 'Gratuit',
+  };
+  const storeFree = FirestoreService.sanitizePublicStore('vend_free', freeSeller);
+  assert.strictEqual(storeFree.hasFullCatalog, false, 'Le mode gratuit restreint à 4 produits');
+  assert.strictEqual((storeFree as any).plan, undefined, 'Le plan ne doit pas être exposé publiquement');
+
+  // Vendeur VIP expiré : hasFullCatalog = false
+  const expiredVip = {
+    status: 'VIP',
+    vipEndsAt: '2020-01-01T00:00:00.000Z',
+  };
+  const storeExpiredVip = FirestoreService.sanitizePublicStore('vend_exp', expiredVip);
+  assert.strictEqual(storeExpiredVip.hasFullCatalog, false, 'Le VIP expiré ne donne pas droit au catalogue complet');
+  assert.strictEqual((storeExpiredVip as any).vipEndsAt, undefined, 'La date VIP ne doit pas être exposée');
 });
 
 // ---------------------------------------------------------------------------
@@ -410,13 +433,14 @@ runTest('13. Migration de vendeurs existants préserve 100% des données privée
   assert.strictEqual(alpha.currency, 'MAD');
   assert.strictEqual((alpha as any).whatsappNumber, undefined, 'Numéro privé préservé uniquement dans users/');
   assert.strictEqual((alpha as any).phoneNormalized, undefined);
+  assert.strictEqual((alpha as any).plan, undefined, 'Plan non exposé');
 
   // Vérifier Beta
   const beta = migratedPublicStores[1];
   assert.strictEqual(beta.id, 'vendeur_2');
-  assert.strictEqual(beta.status, 'VIP');
-  assert.strictEqual(beta.plan, 'VIP');
+  assert.strictEqual(beta.hasFullCatalog, true, 'VIP actif a accès au catalogue complet');
   assert.strictEqual((beta as any).whatsappNumber, undefined);
+  assert.strictEqual((beta as any).vipEndsAt, undefined, 'Date VIP non exposée');
 
   // Vérifier que le document source est intact
   assert.strictEqual(existingVendorDocs[0].whatsappNumber, '+212611111111', 'Le document source users/vendeur_1 est intact');

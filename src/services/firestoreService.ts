@@ -237,6 +237,30 @@ export const FirestoreService = {
   // Strictly Sanitized: No private login phone, no CRM, no auth data, no internal subscription timestamps
   // ----------------------------------------------------
   sanitizePublicStore(uid: string, d: Record<string, any>): PublicStoreProfile {
+    // 1. Calculate minimal catalog activation info:
+    // Determine if full catalog is allowed or restricted to 4 products without exposing internal dates or plans.
+    const isVip = d.status === 'VIP' || d.plan === 'VIP';
+    let fullCatalog = false;
+    if (isVip) {
+      const vipEnd = d.vipEndsAt;
+      fullCatalog = !vipEnd || new Date(vipEnd).getTime() > Date.now();
+    } else if (d.plan === 'Gratuit' || d.status === 'Gratuit') {
+      fullCatalog = false;
+    } else if (d.trialEndsAt || d.date_expiration_essai) {
+      const trialEnd = d.trialEndsAt || d.date_expiration_essai;
+      fullCatalog = new Date(trialEnd).getTime() > Date.now();
+    } else if (d.status === 'Actif' && d.plan !== 'Gratuit') {
+      const created = d.trialStartedAt || d.created_at || d.createdAt;
+      if (created) {
+        const ageDays = (Date.now() - new Date(created).getTime()) / 86400000;
+        fullCatalog = ageDays <= 14;
+      } else {
+        fullCatalog = true;
+      }
+    } else if (typeof d.hasFullCatalog === 'boolean') {
+      fullCatalog = d.hasFullCatalog;
+    }
+
     // COMMERCIAL CONTACT IS ONLY EXPOSED IF EXPLICITLY PROVIDED AND ALLOWED:
     // 1. Merchant explicitly opted-in: "Utiliser mon numéro WhatsApp de connexion comme contact commercial public"
     let orderContact: string | undefined = undefined;
@@ -253,6 +277,11 @@ export const FirestoreService = {
       if (digits.length >= 6) {
         orderContact = d.commercialWhatsApp;
       }
+    } else if (d.orderWhatsApp) {
+      const digits = String(d.orderWhatsApp).replace(/\D/g, '');
+      if (digits.length >= 6) {
+        orderContact = d.orderWhatsApp;
+      }
     }
 
     return {
@@ -262,11 +291,8 @@ export const FirestoreService = {
       location: d.location || 'Maroc',
       logo: d.logo || 'https://images.unsplash.com/photo-1472851294608-062f824d29cc?auto=format&fit=crop&w=400&q=80',
       currency: (d.currency as CurrencyType) || 'MAD',
-      status: d.status || 'Actif',
-      plan: d.plan || (d.status === 'VIP' ? 'VIP' : (d.status === 'Gratuit' ? 'Gratuit' : 'Essai')),
-      trialEndsAt: d.trialEndsAt || d.date_expiration_essai,
-      vipEndsAt: d.vipEndsAt,
-      is_active: d.status !== 'Inactif' && d.status !== 'Suspendu',
+      is_active: d.status !== 'Inactif' && d.status !== 'Suspendu' && d.is_active !== false,
+      hasFullCatalog: fullCatalog,
       publicSlug: d.publicSlug || uid,
       orderWhatsApp: orderContact,
       allowCommercialContact: Boolean(orderContact),
@@ -275,12 +301,12 @@ export const FirestoreService = {
 
   /**
    * Synchronizes a vendor's sanitized public information into the dedicated /publicStores/{uid} document.
-   * Ensures zero private credentials or internal subscription secrets are exposed.
+   * Ensures zero private credentials, no billing details, and no internal subscription timestamps are exposed.
    */
   async syncPublicStore(uid: string, userDoc: Record<string, any>): Promise<PublicStoreProfile> {
-    const docPath = `publicStores/${uid}`;
     try {
       const sanitized = this.sanitizePublicStore(uid, userDoc);
+      // Strictly minimal public fields:
       const payload: Record<string, any> = {
         id: uid,
         name: sanitized.name,
@@ -288,11 +314,8 @@ export const FirestoreService = {
         location: sanitized.location,
         logo: sanitized.logo,
         currency: sanitized.currency,
-        status: sanitized.status,
-        plan: sanitized.plan,
-        trialEndsAt: sanitized.trialEndsAt || null,
-        vipEndsAt: sanitized.vipEndsAt || null,
-        is_active: sanitized.is_active,
+        is_active: sanitized.is_active ?? true,
+        hasFullCatalog: sanitized.hasFullCatalog ?? true,
         publicSlug: sanitized.publicSlug,
         orderWhatsApp: sanitized.orderWhatsApp || null,
         allowCommercialContact: Boolean(sanitized.allowCommercialContact),
@@ -308,8 +331,8 @@ export const FirestoreService = {
   },
 
   /**
-   * Reads public store profile from dedicated /publicStores/{uid} or by publicSlug.
-   * Includes graceful fallback for pre-migration legacy stores.
+   * Reads public store profile strictly from dedicated /publicStores/{uid} or by publicSlug.
+   * Anonymous catalog visitors ONLY query publicStores and NEVER access private users/ collection.
    */
   async getPublicStoreProfile(uidOrSlug: string): Promise<PublicStoreProfile | null> {
     const cleanId = uidOrSlug.trim();
@@ -323,7 +346,7 @@ export const FirestoreService = {
         return this.sanitizePublicStore(cleanId, d);
       }
     } catch {
-      // Continue to query by publicSlug or fallback
+      // Continue to query by publicSlug
     }
 
     // 2. Lookup in publicStores by publicSlug query
@@ -339,39 +362,46 @@ export const FirestoreService = {
         return this.sanitizePublicStore(docSnap.id, docSnap.data());
       }
     } catch {
-      // Continue to migration fallback
+      // Query failed or not found
     }
 
-    // 3. Migration grace period fallback:
-    // If the vendor has not yet been synced to publicStores, attempt to fetch from users/{cleanId}
-    // and automatically populate publicStores so all future requests hit the public collection.
-    try {
-      const snapUser = await getDoc(doc(db, 'users', cleanId));
-      if (snapUser.exists()) {
-        const d = snapUser.data();
-        const sanitized = this.sanitizePublicStore(cleanId, d);
-        this.syncPublicStore(cleanId, d).catch(() => {});
-        return sanitized;
-      }
-    } catch {
-      // users collection is protected by security rules for non-owners/non-admins
-    }
+    // 3. Fallback for authenticated owner or authorized platform admin ONLY:
+    // If an authenticated merchant is previewing their own un-migrated store (or platform admin is checking it),
+    // heal/sync it from users/{cleanId} into publicStores/{cleanId}.
+    // Anonymous public visitors NEVER attempt prohibited reads to users/ to prevent permission-denied errors.
+    const currentUser = auth.currentUser;
+    const isOwner = currentUser && currentUser.uid === cleanId;
+    const isAdmin = currentUser && currentUser.email?.trim().toLowerCase() === 'foosco80@gmail.com';
 
-    try {
-      const qUser = query(
-        collection(db, 'users'),
-        where('publicSlug', '==', cleanId),
-        limit(1)
-      );
-      const querySnapUser = await getDocs(qUser);
-      if (!querySnapUser.empty) {
-        const docSnap = querySnapUser.docs[0];
-        const sanitized = this.sanitizePublicStore(docSnap.id, docSnap.data());
-        this.syncPublicStore(docSnap.id, docSnap.data()).catch(() => {});
-        return sanitized;
+    if (isOwner || isAdmin) {
+      try {
+        const snapUser = await getDoc(doc(db, 'users', cleanId));
+        if (snapUser.exists()) {
+          const d = snapUser.data();
+          const sanitized = this.sanitizePublicStore(cleanId, d);
+          this.syncPublicStore(cleanId, d).catch(() => {});
+          return sanitized;
+        }
+      } catch {
+        // Ignored
       }
-    } catch {
-      // Fallback exhausted
+
+      try {
+        const qUser = query(
+          collection(db, 'users'),
+          where('publicSlug', '==', cleanId),
+          limit(1)
+        );
+        const querySnapUser = await getDocs(qUser);
+        if (!querySnapUser.empty) {
+          const docSnap = querySnapUser.docs[0];
+          const sanitized = this.sanitizePublicStore(docSnap.id, docSnap.data());
+          this.syncPublicStore(docSnap.id, docSnap.data()).catch(() => {});
+          return sanitized;
+        }
+      } catch {
+        // Ignored
+      }
     }
 
     return null;
