@@ -112,6 +112,22 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
   }, [modalOpen, imageGeneratorOpen]);
 
   const handleOpenAdd = () => {
+    if (vendeur.status === 'Inactif' || vendeur.status === 'Suspendu') {
+      showToast('Votre compte est suspendu ou inactif. L’ajout de produits est indisponible.', 'error');
+      return;
+    }
+
+    const isVip = vendeur.status === 'VIP' || (vendeur as any).plan === 'VIP';
+    const isTrial = (vendeur as any).trialEndsAt 
+      ? new Date((vendeur as any).trialEndsAt).getTime() > Date.now()
+      : (vendeur.status === 'Actif' && (vendeur as any).plan !== 'Gratuit');
+    
+    if (!isVip && !isTrial && products.length >= 4) {
+      showToast('Plafond de 4 produits atteint en mode Gratuit. Débloquez le catalogue illimité en passant VIP !', 'info');
+      _onOpenUpgradeModal?.();
+      return;
+    }
+
     setEditingProduct(null);
     setName('');
     setPrice('');
@@ -300,8 +316,8 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
 
       showToast(editingProduct ? 'Produit mis à jour avec succès' : 'Nouveau produit ajouté au catalogue !', 'success');
       setModalOpen(false);
-    } catch {
-      showToast('Erreur lors de l’enregistrement', 'error');
+    } catch (err: any) {
+      showToast(err?.message || 'Erreur lors de l’enregistrement', 'error');
     } finally {
       setIsSubmitting(false);
     }

@@ -28,6 +28,12 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    // Helper to check if vendor account is active (not suspended by admin)
+    function isVendorActive(uid) {
+      return !exists(/databases/$(database)/documents/users/$(uid)) ||
+        !(get(/databases/$(database)/documents/users/$(uid)).data.status in ['Inactif', 'Suspendu']);
+    }
+
     // List of protected sensitive fields related to subscriptions, privileges and account status
     function hasSensitiveSubscriptionFields() {
       return request.resource.data.diff(resource.data).affectedKeys().hasAny([
@@ -40,6 +46,25 @@ service cloud.firestore {
         'vipStartedAt',
         'vipEndsAt'
       ]);
+    }
+
+    // Protection of public store entitlements:
+    // A vendor can NEVER alter hasFullCatalog, is_active, or inject subscription/role fields
+    function vendorTamperingPublicStoreEntitlements() {
+      return (
+        ('hasFullCatalog' in request.resource.data &&
+         (!('hasFullCatalog' in resource.data) || request.resource.data.hasFullCatalog != resource.data.hasFullCatalog)) ||
+        ('is_active' in request.resource.data &&
+         (!('is_active' in resource.data) || request.resource.data.is_active != resource.data.is_active)) ||
+        ('role' in request.resource.data) ||
+        ('status' in request.resource.data) ||
+        ('plan' in request.resource.data) ||
+        ('vipStartedAt' in request.resource.data) ||
+        ('vipEndsAt' in request.resource.data) ||
+        ('trialStartedAt' in request.resource.data) ||
+        ('trialEndsAt' in request.resource.data) ||
+        ('date_expiration_essai' in request.resource.data)
+      );
     }
 
     // 1. Users collection (Vendeurs & Admins) - STRICTEMENT PRIVÉ
@@ -79,9 +104,9 @@ service cloud.firestore {
         // Public can view products for this vendor's store
         allow read: if true;
 
-        // Only the vendor owner can create, update, delete their own products
-        allow create: if isOwner(uid) && isValidId(productId) && request.resource.data.vendeur_id == uid;
-        allow update: if (isOwner(uid) && request.resource.data.vendeur_id == uid) || isAdmin();
+        // Only an active vendor owner can create or update products. Suspended or inactive accounts cannot.
+        allow create: if isOwner(uid) && isValidId(productId) && request.resource.data.vendeur_id == uid && isVendorActive(uid);
+        allow update: if (isOwner(uid) && request.resource.data.vendeur_id == uid && isVendorActive(uid)) || isAdmin();
         allow delete: if isOwner(uid) || isAdmin();
       }
 
@@ -106,20 +131,26 @@ service cloud.firestore {
         (
           isAdmin() ||
           (
-            (!('status' in request.resource.data) || request.resource.data.status in ['Actif', 'Essai', 'Gratuit']) &&
-            (!('plan' in request.resource.data) || request.resource.data.plan in ['Essai', 'Gratuit']) &&
+            (!('is_active' in request.resource.data) || request.resource.data.is_active == true) &&
+            !('role' in request.resource.data) &&
+            !('status' in request.resource.data) &&
+            !('plan' in request.resource.data) &&
             !('vipStartedAt' in request.resource.data) &&
-            !('vipEndsAt' in request.resource.data)
+            !('vipEndsAt' in request.resource.data) &&
+            !('trialStartedAt' in request.resource.data) &&
+            !('trialEndsAt' in request.resource.data) &&
+            !('date_expiration_essai' in request.resource.data)
           )
         )
       ) || isAdmin();
 
-      // Update: Owner can update ordinary public fields (name, logo, slogan, location, currency, publicSlug, orderWhatsApp, allowCommercialContact)
-      // but CANNOT modify any sensitive subscription fields.
+      // Update: Owner can update ordinary public fields (name, logo, slogan, location, currency, publicSlug, orderWhatsApp, allowCommercialContact, updatedAt)
+      // BUT A SELLER CAN NEVER alter hasFullCatalog or is_active to bypass subscription or reactivate a suspended store.
+      // Only the authorized admin can update access rights (hasFullCatalog, is_active) or modify subscription statuses.
       allow update: if (
         isOwner(uid) && 
         request.resource.data.id == uid && 
-        !hasSensitiveSubscriptionFields()
+        !vendorTamperingPublicStoreEntitlements()
       ) || isAdmin();
 
       // Delete: Only owner or admin can delete public storefront

@@ -123,28 +123,69 @@ function evaluateFirestoreRule(params: {
       if (!isOwner) return { allowed: false, reason: 'Un vendeur ne peut pas créer la boutique d’un autre vendeur' };
       if (incomingData?.id !== targetDocId) return { allowed: false, reason: 'ID discordant' };
 
-      const statusOk = !('status' in incomingData!) || ['Actif', 'Essai', 'Gratuit'].includes(incomingData!.status);
-      const planOk = !('plan' in incomingData!) || ['Essai', 'Gratuit'].includes(incomingData!.plan);
-      const noVip = !('vipEndsAt' in incomingData!);
+      const noRole = !('role' in incomingData!);
+      const noStatus = !('status' in incomingData!);
+      const noPlan = !('plan' in incomingData!);
+      const noVip = !('vipEndsAt' in incomingData!) && !('vipStartedAt' in incomingData!);
+      const noTrial = !('trialEndsAt' in incomingData!) && !('trialStartedAt' in incomingData!);
 
-      const allowed = statusOk && planOk && noVip;
-      return { allowed, reason: allowed ? 'Création vitrine publique autorisée' : 'Auto-promotion VIP interdite' };
+      const allowed = noRole && noStatus && noPlan && noVip && noTrial;
+      return { allowed, reason: allowed ? 'Création vitrine publique autorisée' : 'Champs d’abonnement ou de statut interdits sur /publicStores' };
     }
     if (operation === 'update') {
       if (isAdmin) return { allowed: true, reason: 'Admin autorisé' };
       if (!isOwner) return { allowed: false, reason: 'Modification inter-vendeur interdite' };
       if (incomingData?.id !== targetDocId) return { allowed: false, reason: 'ID de boutique immutable' };
 
-      const changedKeys = incomingData ? Object.keys(incomingData) : [];
-      const hasSensitive = changedKeys.some(k => SENSITIVE_KEYS.includes(k) && incomingData?.[k] !== existingData?.[k]);
-      if (hasSensitive) {
+      // Protection hasFullCatalog : un vendeur ne peut pas modifier son droit d'accès au catalogue
+      if ('hasFullCatalog' in incomingData!) {
+        if (!existingData || !('hasFullCatalog' in existingData) || incomingData.hasFullCatalog !== existingData.hasFullCatalog) {
+          return { allowed: false, reason: 'Un vendeur ne peut pas modifier hasFullCatalog' };
+        }
+      }
+
+      // Protection is_active : un vendeur ne peut pas modifier le statut d'activation (ex: réactiver une boutique suspendue)
+      if ('is_active' in incomingData!) {
+        if (!existingData || !('is_active' in existingData) || incomingData.is_active !== existingData.is_active) {
+          return { allowed: false, reason: 'Un vendeur ne peut pas modifier is_active' };
+        }
+      }
+
+      // Interdiction de champs d'abonnement ou privilèges
+      const forbiddenKeys = ['role', 'status', 'plan', 'vipStartedAt', 'vipEndsAt', 'trialStartedAt', 'trialEndsAt', 'date_expiration_essai'];
+      const hasForbidden = forbiddenKeys.some(k => k in incomingData!);
+      if (hasForbidden) {
         return { allowed: false, reason: 'Modification de champs d’abonnement interdite sur la vitrine publique' };
       }
+
       return { allowed: true, reason: 'Mise à jour vitrine publique autorisée' };
     }
     if (operation === 'delete') {
       const allowed = isOwner || isAdmin;
       return { allowed, reason: allowed ? 'Suppression autorisée' : 'Suppression non autorisée' };
+    }
+  }
+
+  // 3. products/{productId} under users/{uid}/products
+  if (collection === 'products') {
+    if (operation === 'get' || operation === 'list') {
+      return { allowed: true, reason: 'Lecture publique des produits autorisée' };
+    }
+    const isVendorSuspended = existingData?.vendorStatus === 'Inactif' || existingData?.vendorStatus === 'Suspendu';
+    if (operation === 'create') {
+      if (!isOwner) return { allowed: false, reason: 'Seul le propriétaire peut créer des produits' };
+      if (isVendorSuspended) return { allowed: false, reason: 'Boutique suspendue : création de produit interdite' };
+      return { allowed: true, reason: 'Création de produit autorisée' };
+    }
+    if (operation === 'update') {
+      if (isAdmin) return { allowed: true, reason: 'Admin autorisé' };
+      if (!isOwner) return { allowed: false, reason: 'Modification non propriétaire interdite' };
+      if (isVendorSuspended) return { allowed: false, reason: 'Boutique suspendue : modification de produit interdite' };
+      return { allowed: true, reason: 'Modification de produit autorisée' };
+    }
+    if (operation === 'delete') {
+      const allowed = isOwner || isAdmin;
+      return { allowed, reason: allowed ? 'Suppression produit autorisée' : 'Suppression non autorisée' };
     }
   }
 
@@ -370,6 +411,66 @@ runTest('11. Un vendeur ne peut pas s’auto-attribuer le statut VIP ou modifier
   assert.ok(updateRes.reason.includes('Modification de champs d’abonnement interdite'));
 });
 
+runTest('11b. Un vendeur ne peut JAMAIS modifier hasFullCatalog pour contourner son abonnement', () => {
+  const sellerAuth: AuthContext = { uid: 'seller_123', email: 'seller@wa.local' };
+  const storeId = 'seller_123';
+
+  // Tentative de passer hasFullCatalog de false à true
+  const updateRes = evaluateFirestoreRule({
+    collection: 'publicStores',
+    operation: 'update',
+    targetDocId: storeId,
+    auth: sellerAuth,
+    incomingData: { id: storeId, hasFullCatalog: true },
+    existingData: { id: storeId, hasFullCatalog: false },
+  });
+  assert.strictEqual(updateRes.allowed, false, 'Un vendeur ne peut pas modifier hasFullCatalog de false à true');
+  assert.ok(updateRes.reason.includes('hasFullCatalog'));
+});
+
+runTest('11c. Un vendeur ne peut JAMAIS réactiver lui-même une boutique suspendue par l’admin (is_active: true)', () => {
+  const sellerAuth: AuthContext = { uid: 'seller_suspended', email: 'suspended@wa.local' };
+  const storeId = 'seller_suspended';
+
+  // Tentative de passer is_active de false à true
+  const updateRes = evaluateFirestoreRule({
+    collection: 'publicStores',
+    operation: 'update',
+    targetDocId: storeId,
+    auth: sellerAuth,
+    incomingData: { id: storeId, is_active: true },
+    existingData: { id: storeId, is_active: false },
+  });
+  assert.strictEqual(updateRes.allowed, false, 'Un vendeur ne peut pas réactiver une boutique suspendue');
+  assert.ok(updateRes.reason.includes('is_active'));
+});
+
+runTest('11d. Une boutique suspendue ou inactive ne peut ni créer ni modifier de produit', () => {
+  const sellerAuth: AuthContext = { uid: 'seller_suspended', email: 'suspended@wa.local' };
+  const storeId = 'seller_suspended';
+
+  const createRes = evaluateFirestoreRule({
+    collection: 'products',
+    operation: 'create',
+    targetDocId: storeId,
+    auth: sellerAuth,
+    incomingData: { vendeur_id: storeId, name: 'Produit interdit' },
+    existingData: { vendorStatus: 'Suspendu' },
+  });
+  assert.strictEqual(createRes.allowed, false, 'Création de produit interdite pour boutique suspendue');
+  assert.ok(createRes.reason.includes('suspendue'));
+
+  const updateRes = evaluateFirestoreRule({
+    collection: 'products',
+    operation: 'update',
+    targetDocId: storeId,
+    auth: sellerAuth,
+    incomingData: { vendeur_id: storeId, name: 'Produit modifié' },
+    existingData: { vendorStatus: 'Inactif' },
+  });
+  assert.strictEqual(updateRes.allowed, false, 'Modification de produit interdite pour boutique inactive');
+});
+
 runTest('12. L’administrateur autorisé (foosco80@gmail.com) peut modifier /publicStores sans blocage', () => {
   const adminAuth: AuthContext = { uid: 'admin_master', email: 'foosco80@gmail.com' };
   const storeId = 'seller_123';
@@ -379,8 +480,8 @@ runTest('12. L’administrateur autorisé (foosco80@gmail.com) peut modifier /pu
     operation: 'update',
     targetDocId: storeId,
     auth: adminAuth,
-    incomingData: { id: storeId, status: 'VIP', plan: 'VIP' },
-    existingData: { id: storeId, status: 'Actif', plan: 'Essai' },
+    incomingData: { id: storeId, status: 'VIP', plan: 'VIP', hasFullCatalog: true, is_active: true },
+    existingData: { id: storeId, status: 'Actif', plan: 'Essai', hasFullCatalog: false, is_active: false },
   });
   assert.strictEqual(updateRes.allowed, true, 'L’admin doit pouvoir modifier la boutique publique');
 });
@@ -447,6 +548,39 @@ runTest('13. Migration de vendeurs existants préserve 100% des données privée
   assert.strictEqual(existingVendorDocs[1].whatsappNumber, '+225070000000', 'Le document source users/vendeur_2 est intact');
 });
 
+runTest('13b. Nettoyage strict des anciens documents : aucun champ obsolète ne subsiste', () => {
+  // Simuler un ancien document publicStores pollué par l'ancienne implémentation
+  const pollutedLegacyStore: Record<string, any> = {
+    id: 'legacy_vendor_1',
+    name: 'Ancienne Boutique',
+    plan: 'VIP',
+    trialStartedAt: '2026-01-01T00:00:00.000Z',
+    trialEndsAt: '2026-01-15T00:00:00.000Z',
+    date_expiration_essai: '2026-01-15T00:00:00.000Z',
+    vipEndsAt: '2027-01-01T00:00:00.000Z',
+    phone: '+212600000000',
+    whatsappNumber: '+212600000000',
+    role: 'seller',
+    status: 'Actif',
+  };
+
+  // Lors de la synchronisation vers publicStores (setDoc sans merge):
+  const cleanProfile = FirestoreService.sanitizePublicStore('legacy_vendor_1', pollutedLegacyStore);
+
+  // Le profil doit contenir uniquement les champs publics autorisés
+  const keys = Object.keys(cleanProfile);
+  assert.ok(!keys.includes('plan'), 'plan doit être purgé');
+  assert.ok(!keys.includes('trialStartedAt'), 'trialStartedAt doit être purgé');
+  assert.ok(!keys.includes('trialEndsAt'), 'trialEndsAt doit être purgé');
+  assert.ok(!keys.includes('date_expiration_essai'), 'date_expiration_essai doit être purgé');
+  assert.ok(!keys.includes('vipEndsAt'), 'vipEndsAt doit être purgé');
+  assert.ok(!keys.includes('phone'), 'phone doit être purgé');
+  assert.ok(!keys.includes('whatsappNumber'), 'whatsappNumber doit être purgé');
+  assert.ok(!keys.includes('role'), 'role doit être purgé');
+  assert.ok(keys.includes('hasFullCatalog'), 'hasFullCatalog doit être présent');
+  assert.ok(keys.includes('is_active'), 'is_active doit être présent');
+});
+
 // ---------------------------------------------------------------------------
 // TEST GROUP 6 : Vérification des Fichiers de Règles et Blueprint
 // ---------------------------------------------------------------------------
@@ -478,6 +612,15 @@ runTest('15. firebase-blueprint.json intègre PublicStore et le chemin /publicSt
     '#/entities/PublicStore',
     'La référence du schéma doit pointer vers #/entities/PublicStore'
   );
+});
+
+runTest('16. firestore.rules protège les droits d’accès avec vendorTamperingPublicStoreEntitlements et isVendorActive', () => {
+  const rules = fs.readFileSync('firestore.rules', 'utf8');
+
+  assert.ok(rules.includes('function vendorTamperingPublicStoreEntitlements()'), 'Fonction de détection de falsification requise');
+  assert.ok(rules.includes('function isVendorActive(uid)'), 'Vérification du statut actif requise');
+  assert.ok(rules.includes('!vendorTamperingPublicStoreEntitlements()'), 'La règle update de publicStores doit utiliser vendorTamperingPublicStoreEntitlements');
+  assert.ok(rules.includes('isVendorActive(uid)'), 'La règle de création/mise à jour produit doit exiger isVendorActive');
 });
 
 console.log(`\n🎉 TOUS LES ${passedTests} TESTS DE SÉCURITÉ FIRESTORE ET CONFIDENTIALITÉ ONT RÉUSSI !\n`);

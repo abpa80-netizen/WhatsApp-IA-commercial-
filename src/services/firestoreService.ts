@@ -239,9 +239,14 @@ export const FirestoreService = {
   sanitizePublicStore(uid: string, d: Record<string, any>): PublicStoreProfile {
     // 1. Calculate minimal catalog activation info:
     // Determine if full catalog is allowed or restricted to 4 products without exposing internal dates or plans.
-    const isVip = d.status === 'VIP' || d.plan === 'VIP';
+    // Suspended or inactive accounts are strictly deactivated (is_active: false, hasFullCatalog: false).
+    const isSuspended = d.status === 'Inactif' || d.status === 'Suspendu';
+    const isVip = (d.status === 'VIP' || d.plan === 'VIP') && !isSuspended;
     let fullCatalog = false;
-    if (isVip) {
+
+    if (isSuspended) {
+      fullCatalog = false;
+    } else if (isVip) {
       const vipEnd = d.vipEndsAt;
       fullCatalog = !vipEnd || new Date(vipEnd).getTime() > Date.now();
     } else if (d.plan === 'Gratuit' || d.status === 'Gratuit') {
@@ -257,8 +262,11 @@ export const FirestoreService = {
       } else {
         fullCatalog = true;
       }
-    } else if (typeof d.hasFullCatalog === 'boolean') {
+    } else if (typeof d.hasFullCatalog === 'boolean' && !('status' in d) && !('plan' in d)) {
+      // Reading from an already verified /publicStores document
       fullCatalog = d.hasFullCatalog;
+    } else {
+      fullCatalog = false;
     }
 
     // COMMERCIAL CONTACT IS ONLY EXPOSED IF EXPLICITLY PROVIDED AND ALLOWED:
@@ -291,7 +299,7 @@ export const FirestoreService = {
       location: d.location || 'Maroc',
       logo: d.logo || 'https://images.unsplash.com/photo-1472851294608-062f824d29cc?auto=format&fit=crop&w=400&q=80',
       currency: (d.currency as CurrencyType) || 'MAD',
-      is_active: d.status !== 'Inactif' && d.status !== 'Suspendu' && d.is_active !== false,
+      is_active: !isSuspended && d.is_active !== false,
       hasFullCatalog: fullCatalog,
       publicSlug: d.publicSlug || uid,
       orderWhatsApp: orderContact,
@@ -301,7 +309,9 @@ export const FirestoreService = {
 
   /**
    * Synchronizes a vendor's sanitized public information into the dedicated /publicStores/{uid} document.
-   * Ensures zero private credentials, no billing details, and no internal subscription timestamps are exposed.
+   * Replaces the document completely (without merge: true) to ensure legacy sensitive fields
+   * (plan, trialStartedAt, trialEndsAt, date_expiration_essai, vipEndsAt, phone, role)
+   * are completely stripped while preserving legitimate public store data.
    */
   async syncPublicStore(uid: string, userDoc: Record<string, any>): Promise<PublicStoreProfile> {
     try {
@@ -322,7 +332,8 @@ export const FirestoreService = {
         updatedAt: new Date().toISOString(),
       };
 
-      await setDoc(doc(db, 'publicStores', uid), payload, { merge: true });
+      // Set document without merge: true to purge obsolete sensitive keys
+      await setDoc(doc(db, 'publicStores', uid), payload);
       return sanitized;
     } catch (err) {
       console.warn(`[FirestoreService] Erreur lors de la synchronisation de publicStores/${uid}:`, err);
@@ -469,6 +480,30 @@ export const FirestoreService = {
     const prodId = product.id || `prod_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     const docPath = `users/${uid}/products/${prodId}`;
     try {
+      // 1. Verify vendor status from reliable private profile
+      const userDoc = await this.getUserProfile(uid);
+      if (userDoc) {
+        if (userDoc.status === 'Inactif' || userDoc.status === 'Suspendu') {
+          throw new Error("Opération impossible : Votre boutique est suspendue ou inactive.");
+        }
+
+        const isNewProduct = !product.id;
+        if (isNewProduct) {
+          const isVip = userDoc.status === 'VIP' || userDoc.plan === 'VIP';
+          const isTrialValid = (userDoc.trialEndsAt || userDoc.date_expiration_essai)
+            ? new Date(userDoc.trialEndsAt || userDoc.date_expiration_essai).getTime() > Date.now()
+            : (userDoc.status === 'Actif' && userDoc.plan !== 'Gratuit');
+          const hasUnlimited = isVip || isTrialValid;
+
+          if (!hasUnlimited) {
+            const currentProducts = await this.getUserProducts(uid);
+            if (currentProducts.length >= 4) {
+              throw new Error("Plafond atteint : Le mode Gratuit est limité à 4 produits maximum. Passez au pack VIP pour débloquer l'ajout illimité.");
+            }
+          }
+        }
+      }
+
       const now = new Date().toISOString();
       const payload = {
         id: prodId,
