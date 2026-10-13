@@ -123,14 +123,19 @@ service cloud.firestore {
       allow get: if true;
       allow list: if true;
 
-      // Create: Owner or admin can create the public storefront profile
-      // Seller cannot self-assign VIP status, VIP plan, or VIP dates
+      // Create: Admin or trusted backend can initialize storefront with full entitlements.
+      // An ordinary owner can only create basic commercial details:
+      // - hasFullCatalog CANNOT be set to true by an ordinary seller (must be omitted or false)
+      // - is_active CANNOT be created if vendor account is suspended or inactive
+      // - Seller cannot self-assign VIP status, VIP plan, or VIP dates
       allow create: if (
         isOwner(uid) && 
         request.resource.data.id == uid &&
         (
           isAdmin() ||
           (
+            isVendorActive(uid) &&
+            (!('hasFullCatalog' in request.resource.data) || request.resource.data.hasFullCatalog == false) &&
             (!('is_active' in request.resource.data) || request.resource.data.is_active == true) &&
             !('role' in request.resource.data) &&
             !('status' in request.resource.data) &&
@@ -153,8 +158,9 @@ service cloud.firestore {
         !vendorTamperingPublicStoreEntitlements()
       ) || isAdmin();
 
-      // Delete: Only owner or admin can delete public storefront
-      allow delete: if isOwner(uid) || isAdmin();
+      // Delete: Only authorized admin can delete public storefront.
+      // A seller CANNOT delete and recreate their publicStore to bypass expired trial or suspension!
+      allow delete: if isAdmin();
     }
 
     // 4. Global Settings: Read by all, modified only by admin

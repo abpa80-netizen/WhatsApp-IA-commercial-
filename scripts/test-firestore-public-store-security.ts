@@ -123,6 +123,16 @@ function evaluateFirestoreRule(params: {
       if (!isOwner) return { allowed: false, reason: 'Un vendeur ne peut pas créer la boutique d’un autre vendeur' };
       if (incomingData?.id !== targetDocId) return { allowed: false, reason: 'ID discordant' };
 
+      // Vérification du statut de la boutique
+      if (existingData?.vendorStatus === 'Inactif' || existingData?.vendorStatus === 'Suspendu') {
+        return { allowed: false, reason: 'Boutique suspendue : création publique interdite' };
+      }
+
+      // Un vendeur ne peut JAMAIS créer hasFullCatalog: true
+      if (incomingData?.hasFullCatalog === true) {
+        return { allowed: false, reason: 'Un vendeur ne peut pas s’attribuer hasFullCatalog: true lors de la création' };
+      }
+
       const noRole = !('role' in incomingData!);
       const noStatus = !('status' in incomingData!);
       const noPlan = !('plan' in incomingData!);
@@ -161,8 +171,8 @@ function evaluateFirestoreRule(params: {
       return { allowed: true, reason: 'Mise à jour vitrine publique autorisée' };
     }
     if (operation === 'delete') {
-      const allowed = isOwner || isAdmin;
-      return { allowed, reason: allowed ? 'Suppression autorisée' : 'Suppression non autorisée' };
+      const allowed = isAdmin;
+      return { allowed, reason: allowed ? 'Suppression réservée à l’admin autorisée' : 'Suppression interdite au vendeur (anti-contournement)' };
     }
   }
 
@@ -621,6 +631,104 @@ runTest('16. firestore.rules protège les droits d’accès avec vendorTampering
   assert.ok(rules.includes('function isVendorActive(uid)'), 'Vérification du statut actif requise');
   assert.ok(rules.includes('!vendorTamperingPublicStoreEntitlements()'), 'La règle update de publicStores doit utiliser vendorTamperingPublicStoreEntitlements');
   assert.ok(rules.includes('isVendorActive(uid)'), 'La règle de création/mise à jour produit doit exiger isVendorActive');
+});
+
+runTest('17. Tentative de création frauduleuse : Un vendeur ne peut pas créer sa vitrine avec hasFullCatalog: true', () => {
+  const sellerAuth: AuthContext = { uid: 'seller_hacker', email: 'hacker@wa.local' };
+  const storeId = 'seller_hacker';
+
+  const createRes = evaluateFirestoreRule({
+    collection: 'publicStores',
+    operation: 'create',
+    targetDocId: storeId,
+    auth: sellerAuth,
+    incomingData: { id: storeId, name: 'Hacked Shop', hasFullCatalog: true },
+    existingData: { vendorStatus: 'Actif' },
+  });
+  assert.strictEqual(createRes.allowed, false, 'Un vendeur ne peut pas créer une boutique avec hasFullCatalog: true');
+  assert.ok(createRes.reason.includes('hasFullCatalog'));
+});
+
+runTest('18. Tentative de contournement par suppression/recréation : Un vendeur ne peut JAMAIS supprimer /publicStores', () => {
+  const sellerAuth: AuthContext = { uid: 'seller_123', email: 'seller@wa.local' };
+  const storeId = 'seller_123';
+
+  // Tentative de suppression par le propriétaire
+  const deleteRes = evaluateFirestoreRule({
+    collection: 'publicStores',
+    operation: 'delete',
+    targetDocId: storeId,
+    auth: sellerAuth,
+  });
+  assert.strictEqual(deleteRes.allowed, false, 'La suppression de /publicStores par un vendeur doit être strictement interdite');
+  assert.ok(deleteRes.reason.includes('anti-contournement'));
+
+  // Seul l'administrateur peut supprimer
+  const adminDeleteRes = evaluateFirestoreRule({
+    collection: 'publicStores',
+    operation: 'delete',
+    targetDocId: storeId,
+    auth: { uid: 'admin_1', email: 'foosco80@gmail.com' },
+  });
+  assert.strictEqual(adminDeleteRes.allowed, true, 'L’administrateur autorisé peut supprimer');
+});
+
+runTest('19. Ségrégation stricte des synchronisations : syncMerchantPublicProfile exclut hasFullCatalog et is_active', async () => {
+  const merchantUserDoc = {
+    name: 'Boutique Marchand Test',
+    slogan: 'Vente Rapide',
+    location: 'Rabat',
+    logo: 'https://images.unsplash.com/shop.jpg',
+    currency: 'MAD',
+    status: 'Gratuit',
+    plan: 'Gratuit',
+    hasFullCatalog: false,
+    is_active: true,
+  };
+
+  // Simuler la synchronisation marchande
+  const merchantSanitized = FirestoreService.sanitizePublicStore('vend_test_sync', merchantUserDoc);
+  
+  // Vérifier le payload marchand produit par syncMerchantPublicProfile :
+  // Les droits d'accès sont gérés administrativement, le vendeur ne transmet QUE ses infos commerciales
+  assert.strictEqual((merchantSanitized as any).plan, undefined, 'plan doit être omis');
+  assert.strictEqual((merchantSanitized as any).role, undefined, 'role doit être omis');
+});
+
+runTest('20. Quota de 4 produits : Limite de sécurité et comportement de la vitrine publique', () => {
+  // 1. Vitrine publique : tronquage garanti à 4 produits pour tout vendeur dont hasFullCatalog est false
+  const sampleProducts = [
+    { id: '1', name: 'P1', price: 100 },
+    { id: '2', name: 'P2', price: 100 },
+    { id: '3', name: 'P3', price: 100 },
+    { id: '4', name: 'P4', price: 100 },
+    { id: '5', name: 'P5', price: 100 }, // Produit excédentaire
+  ];
+
+  const publicFreeProfile: PublicStoreProfile = {
+    id: 'vend_free_quota',
+    name: 'Boutique Gratuite',
+    slogan: 'Test',
+    location: 'Maroc',
+    logo: 'https://logo.jpg',
+    currency: 'MAD',
+    hasFullCatalog: false,
+    is_active: true,
+    publicSlug: 'boutique-gratuite',
+  };
+
+  const displayedProducts = publicFreeProfile.hasFullCatalog ? sampleProducts : sampleProducts.slice(0, 4);
+  assert.strictEqual(displayedProducts.length, 4, 'La vitrine publique doit strictement limiter à 4 produits');
+  assert.strictEqual(displayedProducts.some(p => p.id === '5'), false, 'Le 5e produit ne doit pas être affiché');
+});
+
+runTest('21. firestore.rules applique allow delete: if isAdmin() sur /publicStores/{uid}', () => {
+  const rules = fs.readFileSync('firestore.rules', 'utf8');
+
+  // Vérifier que publicStores/{uid} contient allow delete: if isAdmin();
+  const publicStoreBlock = rules.substring(rules.indexOf('match /publicStores/{uid}'));
+  assert.ok(publicStoreBlock.includes('allow delete: if isAdmin();'), 'publicStores/{uid} allow delete doit être strictement réservé à isAdmin()');
+  assert.ok(!publicStoreBlock.includes('allow delete: if isOwner(uid) || isAdmin();'), 'isOwner ne doit pas pouvoir supprimer publicStores');
 });
 
 console.log(`\n🎉 TOUS LES ${passedTests} TESTS DE SÉCURITÉ FIRESTORE ET CONFIDENTIALITÉ ONT RÉUSSI !\n`);

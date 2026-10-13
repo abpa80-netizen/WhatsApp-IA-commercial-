@@ -308,15 +308,44 @@ export const FirestoreService = {
   },
 
   /**
-   * Synchronizes a vendor's sanitized public information into the dedicated /publicStores/{uid} document.
-   * Replaces the document completely (without merge: true) to ensure legacy sensitive fields
-   * (plan, trialStartedAt, trialEndsAt, date_expiration_essai, vipEndsAt, phone, role)
-   * are completely stripped while preserving legitimate public store data.
+   * Merchant-side storefront synchronization:
+   * Updates ONLY commercial public presentation fields: name, slogan, location, logo, currency, publicSlug, orderWhatsApp, allowCommercialContact.
+   * NEVER alters hasFullCatalog or is_active (guaranteed by omitting them from payload).
    */
-  async syncPublicStore(uid: string, userDoc: Record<string, any>): Promise<PublicStoreProfile> {
+  async syncMerchantPublicProfile(uid: string, userDoc: Record<string, any>): Promise<PublicStoreProfile> {
     try {
       const sanitized = this.sanitizePublicStore(uid, userDoc);
-      // Strictly minimal public fields:
+      const payload: Record<string, any> = {
+        id: uid,
+        name: sanitized.name,
+        slogan: sanitized.slogan,
+        location: sanitized.location,
+        logo: sanitized.logo,
+        currency: sanitized.currency,
+        publicSlug: sanitized.publicSlug,
+        orderWhatsApp: sanitized.orderWhatsApp || null,
+        allowCommercialContact: Boolean(sanitized.allowCommercialContact),
+        updatedAt: new Date().toISOString(),
+      };
+
+      await setDoc(doc(db, 'publicStores', uid), payload, { merge: true });
+      return sanitized;
+    } catch (err) {
+      console.warn(`[FirestoreService] Erreur lors de la mise à jour marchande de publicStores/${uid}:`, err);
+      return this.sanitizePublicStore(uid, userDoc);
+    }
+  },
+
+  /**
+   * Administrator-side public store synchronization:
+   * Strictly computes entitlements (hasFullCatalog, is_active) from reliable private user records
+   * and replaces the document entirely (without merge: true) to purge any obsolete sensitive fields
+   * (plan, trialStartedAt, trialEndsAt, date_expiration_essai, vipEndsAt, phone, role)
+   * while preserving legitimate public store presentation data.
+   */
+  async syncAdminPublicStore(uid: string, userDoc: Record<string, any>): Promise<PublicStoreProfile> {
+    try {
+      const sanitized = this.sanitizePublicStore(uid, userDoc);
       const payload: Record<string, any> = {
         id: uid,
         name: sanitized.name,
@@ -325,7 +354,7 @@ export const FirestoreService = {
         logo: sanitized.logo,
         currency: sanitized.currency,
         is_active: sanitized.is_active ?? true,
-        hasFullCatalog: sanitized.hasFullCatalog ?? true,
+        hasFullCatalog: sanitized.hasFullCatalog ?? false,
         publicSlug: sanitized.publicSlug,
         orderWhatsApp: sanitized.orderWhatsApp || null,
         allowCommercialContact: Boolean(sanitized.allowCommercialContact),
@@ -336,8 +365,22 @@ export const FirestoreService = {
       await setDoc(doc(db, 'publicStores', uid), payload);
       return sanitized;
     } catch (err) {
-      console.warn(`[FirestoreService] Erreur lors de la synchronisation de publicStores/${uid}:`, err);
+      console.warn(`[FirestoreService] Erreur lors de la synchronisation administrative de publicStores/${uid}:`, err);
       return this.sanitizePublicStore(uid, userDoc);
+    }
+  },
+
+  /**
+   * Synchronizes public store info:
+   * Delegates to admin entitlement sync if caller is platform admin,
+   * otherwise delegates to safe merchant commercial profile sync (preserving entitlements).
+   */
+  async syncPublicStore(uid: string, userDoc: Record<string, any>): Promise<PublicStoreProfile> {
+    const isAdmin = auth.currentUser?.email?.trim().toLowerCase() === 'foosco80@gmail.com';
+    if (isAdmin) {
+      return this.syncAdminPublicStore(uid, userDoc);
+    } else {
+      return this.syncMerchantPublicProfile(uid, userDoc);
     }
   },
 
@@ -430,7 +473,7 @@ export const FirestoreService = {
 
       for (const d of snap.docs) {
         try {
-          await this.syncPublicStore(d.id, d.data());
+          await this.syncAdminPublicStore(d.id, d.data());
           migrated++;
         } catch (e) {
           console.error(`[FirestoreService] Migration error for user ${d.id}:`, e);
