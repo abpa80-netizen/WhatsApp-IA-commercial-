@@ -309,9 +309,12 @@ export async function handleRecalculateEntitlements(req: any, res: any): Promise
 
     // 1. Verification of CRON_SECRET (Vercel Cron / Cloud Scheduler)
     const configuredCronSecret = process.env.CRON_SECRET;
-    const providedSecret = req.headers['x-cron-secret'] || 
-      (typeof req.headers.authorization === 'string' && req.headers.authorization.startsWith('Bearer ') && !req.headers.authorization.includes('ey')
-        ? req.headers.authorization.slice(7)
+    const authorizationHeader = req.headers.authorization;
+    // Compare the supplied Bearer value directly to CRON_SECRET. Do not infer
+    // token type from its contents: valid random secrets may contain any substring.
+    const providedSecret = req.headers['x-cron-secret'] ||
+      (typeof authorizationHeader === 'string' && authorizationHeader.startsWith('Bearer ')
+        ? authorizationHeader.slice(7)
         : null);
 
     if (configuredCronSecret && configuredCronSecret.trim().length > 0 && providedSecret === configuredCronSecret) {
