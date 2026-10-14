@@ -1161,7 +1161,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     if (!v) return null;
                     // Use the configured trial duration from the actual trial start.
                     // A persisted trialEndsAt may be stale after the administrator changes trialDays.
-                    const configuredTrialDays = Math.max(0, Number(config?.trialDays ?? config?.trial_days ?? 7));
+                    const configuredTrialDays = Math.max(0, Number(trialDays ?? config?.trialDays ?? config?.trial_days ?? 7));
                     const trialStartValue = v.trialStartedAt || v.createdAt || v.created_at;
                     const trialStartMs = trialStartValue ? new Date(trialStartValue).getTime() : Number.NaN;
                     const storedExpirationValue = v.trialEndsAt || v.date_expiration_essai;
