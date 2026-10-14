@@ -242,7 +242,7 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
                   {vendeur.name}
                 </h1>
                 <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold px-2 py-0.5 rounded-full">
-                  <ShieldCheck className="w-3 h-3 text-[#25D366]" /> Vérifié
+                  <ShieldCheck className="w-3 h-3 text-[#25D366]" /> Boutique en ligne
                 </span>
               </div>
 
