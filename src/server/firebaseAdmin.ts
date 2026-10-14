@@ -63,7 +63,7 @@ export function isFirebaseAdminConfigured(): boolean {
 }
 
 function normalizePrivateKey(raw: string): string {
-  // Vercel may store PEM values with literal escaped line breaks or wrapping quotes.
+  // Vercel may store PEM values with escaped line breaks or wrapping quotes.
   let key = raw.trim();
   if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
     key = key.slice(1, -1).trim();
@@ -74,6 +74,15 @@ function normalizePrivateKey(raw: string): string {
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .trim();
+
+  // Return diagnostics only; never include any credential content in errors or logs.
+  const hasBegin = key.includes('-----BEGIN PRIVATE KEY-----');
+  const hasEnd = key.includes('-----END PRIVATE KEY-----');
+  if (!hasBegin || !hasEnd) {
+    throw new Error(
+      `FIREBASE_PRIVATE_KEY mal formée (longueur=${key.length}, BEGIN_PRIVATE_KEY=${hasBegin}, END_PRIVATE_KEY=${hasEnd}). Copiez uniquement le champ private_key du JSON de compte de service.`
+    );
+  }
   return key;
 }
 
@@ -119,14 +128,22 @@ export function getAdminDb(): Firestore {
       }
       // 2. Separate client email + private key
       else if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
-        initializeApp({
-          credential: cert({
+        const privateKey = normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY);
+        try {
+          initializeApp({
+            credential: cert({
+              projectId,
+              clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+              privateKey,
+            }),
             projectId,
-            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-            privateKey: normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY),
-          }),
-          projectId,
-        });
+          });
+        } catch (credentialError: any) {
+          // Safe metadata only: never include the key or email in logs/errors.
+          throw new Error(
+            `Firebase Admin refuse FIREBASE_PRIVATE_KEY (longueur=${privateKey.length}, lignes=${privateKey.split('\n').length}, BEGIN=${privateKey.includes('-----BEGIN PRIVATE KEY-----')}, END=${privateKey.includes('-----END PRIVATE KEY-----')}). Vérifiez que la valeur provient intégralement du champ private_key du JSON téléchargé.`
+          );
+        }
       }
       // 3. Google Application Default Credentials (e.g. Cloud Run / GCP runtime)
       else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
