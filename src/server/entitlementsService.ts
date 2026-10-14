@@ -47,7 +47,7 @@ export interface RecalculationSummary {
 export function computeVendorEntitlements(
   userDoc: Record<string, any> | null | undefined,
   nowMs: number = Date.now(),
-  configuredTrialDays: number = 7
+  configuredTrialDays: number = 3
 ): EntitlementResult {
   // Case 1: Private user document is absent or completely empty
   if (!userDoc || Object.keys(userDoc).length === 0 || (!userDoc.uid && !userDoc.id && !userDoc.name && !userDoc.status)) {
@@ -115,7 +115,7 @@ export function computeVendorEntitlements(
     const storedEndMs = storedTrialEnd ? new Date(storedTrialEnd).getTime() : Number.NaN;
     const safeTrialDays = Number.isFinite(configuredTrialDays)
       ? Math.max(0, configuredTrialDays)
-      : 7;
+      : 3;
     const trialEndMs = Number.isFinite(startMs)
       ? startMs + safeTrialDays * 86400000
       : storedEndMs;
@@ -165,17 +165,9 @@ export async function recalculateAllEntitlementsServer(): Promise<RecalculationS
   const adminDb = getAdminDb();
   const now = Date.now();
 
-  // Read dynamic settings/global for configured trialDays
-  let dynamicTrialDays = 7;
-  try {
-    const settingsDoc = await adminDb.collection('settings').doc('global').get();
-    if (settingsDoc.exists) {
-      const s = settingsDoc.data();
-      dynamicTrialDays = Number(s?.trialDays ?? s?.trial_days ?? 7);
-    }
-  } catch (err) {
-    console.warn('[Entitlements Engine] Could not read settings/global, using default trialDays of 7:', err);
-  }
+  // Fixed commercial policy: trials always last exactly 3 days.
+  // Do not rely on editable/stale settings/global values for subscription enforcement.
+  const dynamicTrialDays = 3;
 
   const summary: RecalculationSummary = {
     timestamp: new Date().toISOString(),
