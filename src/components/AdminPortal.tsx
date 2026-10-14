@@ -83,6 +83,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [trialDays, setTrialDays] = useState(config?.trialDays ?? config?.trial_days ?? 7);
   const [whatsappSupport, setWhatsappSupport] = useState(config?.supportWhatsapp || config?.whatsapp_support || '+212600000000');
   const [savingConfig, setSavingConfig] = useState(false);
+  // These hooks must remain above every conditional return to preserve React hook order.
+  const [migrating, setMigrating] = useState(false);
+  const [recalculating, setRecalculating] = useState(false);
 
   // Keep local inputs in sync with config prop
   useEffect(() => {
@@ -600,9 +603,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       showToast('Erreur lors de la suppression du vendeur', 'error');
     }
   };
-
-  const [migrating, setMigrating] = useState(false);
-  const [recalculating, setRecalculating] = useState(false);
 
   const handleMigratePublicStores = async () => {
     setMigrating(true);
