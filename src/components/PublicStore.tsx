@@ -77,21 +77,18 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
       return false;
     }
 
-    const trialEnd = (vendeur as any).trialEndsAt || (vendeur as any).date_expiration_essai;
-    if (trialEnd) {
-      const isValid = new Date(trialEnd).getTime() > Date.now();
-      if (isValid) return true;
-    }
-
-    // Active account without explicit Gratuit: consider trial active during first 14 days
+    // Trial start + fixed three-day duration takes precedence over stale stored expiration fields.
     if ((vendeur as any).status === 'Actif' && plan !== 'Gratuit') {
       const created = (vendeur as any).trialStartedAt || (vendeur as any).created_at || (vendeur as any).createdAt;
       if (created) {
-        const ageDays = (Date.now() - new Date(created).getTime()) / 86400000;
-        if (ageDays <= 3) return true;
-      } else {
-        return true;
+        const startMs = new Date(created).getTime();
+        return Number.isFinite(startMs) && startMs + 3 * 86400000 > Date.now();
       }
+    }
+
+    const trialEnd = (vendeur as any).trialEndsAt || (vendeur as any).date_expiration_essai;
+    if (trialEnd) {
+      return new Date(trialEnd).getTime() > Date.now();
     }
 
     return false;
