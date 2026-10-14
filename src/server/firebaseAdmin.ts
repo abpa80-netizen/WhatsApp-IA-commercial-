@@ -87,8 +87,8 @@ export function getAdminDb(): Firestore {
           // Never log the credential or private key.
           if (typeof creds.private_key === 'string') {
             creds.private_key = creds.private_key
-              .replace(/\\\\n/g, '\n')
-              .replace(/\\r\\n/g, '\n')
+              .replace(/\\n/g, '\n')
+              .replace(/\r\n/g, '\n')
               .trim();
           }
           if (!creds.project_id && projectId) {
