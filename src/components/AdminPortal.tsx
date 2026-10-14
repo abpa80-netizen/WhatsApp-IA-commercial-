@@ -1146,8 +1146,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 <tbody className="divide-y divide-slate-800 bg-slate-900/40">
                   {trialVendors.map((v) => {
                     if (!v) return null;
-                    // Use the configured trial duration from the actual trial start.
-                    // A persisted trialEndsAt may be stale after the administrator changes trialDays.
+                    // Use the fixed three-day trial duration from the actual trial start.
                     const configuredTrialDays = 3;
                     const trialStartValue = v.trialStartedAt || v.createdAt || v.created_at;
                     const trialStartMs = trialStartValue ? new Date(trialStartValue).getTime() : Number.NaN;
