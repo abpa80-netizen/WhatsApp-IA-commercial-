@@ -269,17 +269,16 @@ export const FirestoreService = {
       fullCatalog = !vipEnd || new Date(vipEnd).getTime() > Date.now();
     } else if (d.plan === 'Gratuit' || d.status === 'Gratuit') {
       fullCatalog = false;
-    } else if (d.trialEndsAt || d.date_expiration_essai) {
-      const trialEnd = d.trialEndsAt || d.date_expiration_essai;
-      fullCatalog = new Date(trialEnd).getTime() > Date.now();
-    } else if (d.status === 'Actif' && d.plan !== 'Gratuit') {
-      const created = d.trialStartedAt || d.created_at || d.createdAt;
-      if (created) {
-        const ageDays = (Date.now() - new Date(created).getTime()) / 86400000;
-        fullCatalog = ageDays <= configuredTrialDays;
-      } else {
-        fullCatalog = false;
-      }
+    } else if (d.trialStartedAt || d.createdAt || d.created_at || d.trialEndsAt || d.date_expiration_essai) {
+      // The trial start plus the fixed duration takes precedence over stale legacy expiration fields.
+      const trialStart = d.trialStartedAt || d.createdAt || d.created_at;
+      const storedTrialEnd = d.trialEndsAt || d.date_expiration_essai;
+      const startMs = trialStart ? new Date(trialStart).getTime() : Number.NaN;
+      const storedEndMs = storedTrialEnd ? new Date(storedTrialEnd).getTime() : Number.NaN;
+      const trialEndMs = Number.isFinite(startMs)
+        ? startMs + configuredTrialDays * 86400000
+        : storedEndMs;
+      fullCatalog = Number.isFinite(trialEndMs) && trialEndMs > Date.now();
     } else if (typeof d.hasFullCatalog === 'boolean' && !('status' in d) && !('plan' in d)) {
       // Reading from an already verified /publicStores document
       fullCatalog = d.hasFullCatalog;
