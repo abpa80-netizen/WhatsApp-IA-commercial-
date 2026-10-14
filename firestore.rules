@@ -29,8 +29,9 @@ service cloud.firestore {
     }
 
     // Helper to check if vendor account is active (not suspended by admin)
+    // An absent private user document cannot be treated as an active merchant.
     function isVendorActive(uid) {
-      return !exists(/databases/$(database)/documents/users/$(uid)) ||
+      return exists(/databases/$(database)/documents/users/$(uid)) &&
         !(get(/databases/$(database)/documents/users/$(uid)).data.status in ['Inactif', 'Suspendu']);
     }
 

@@ -602,6 +602,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   };
 
   const [migrating, setMigrating] = useState(false);
+  const [recalculating, setRecalculating] = useState(false);
 
   const handleMigratePublicStores = async () => {
     setMigrating(true);
@@ -613,6 +614,22 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       showToast('Erreur lors de la migration des boutiques publiques', 'error');
     } finally {
       setMigrating(false);
+    }
+  };
+
+  const handleRecalculateEntitlements = async () => {
+    setRecalculating(true);
+    try {
+      const res = await ApiService.recalculateEntitlements();
+      showToast(
+        `Expirations recalculées : ${res.updated} boutiques mises à jour (${res.fullCatalog} accès total, ${res.restricted} restreintes à 4 produits, ${res.suspended} suspendues).`,
+        'success'
+      );
+      await fetchAdminData(false);
+    } catch {
+      showToast('Erreur lors du recalcul des droits d’expiration', 'error');
+    } finally {
+      setRecalculating(false);
     }
   };
 
@@ -1255,6 +1272,17 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               >
                 <RotateCw className={`w-3.5 h-3.5 ${migrating ? 'animate-spin' : ''}`} />
                 <span>{migrating ? 'Migration...' : 'Synchroniser /publicStores'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleRecalculateEntitlements}
+                disabled={recalculating}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/40 transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+                title="Recalcule immédiatement l’expiration des essais et abonnements VIP et synchronise /publicStores"
+              >
+                <Clock className={`w-3.5 h-3.5 ${recalculating ? 'animate-spin' : ''}`} />
+                <span>{recalculating ? 'Calcul...' : 'Recalculer expirations'}</span>
               </button>
 
               <button

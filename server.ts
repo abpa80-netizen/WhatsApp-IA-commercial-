@@ -314,6 +314,47 @@ app.post('/api/cloudinary/sign', async (req: Request, res: Response) => {
   await handleCloudinarySign(req, res);
 });
 
+// -------------------------------------------------------------------------
+// 4. SUBSCRIPTION ENTITLEMENTS & EXPIRATION RECALCULATION ENDPOINT
+// -------------------------------------------------------------------------
+app.post('/api/admin/recalculate-entitlements', async (req: Request, res: Response) => {
+  try {
+    const cronSecret = process.env.CRON_SECRET;
+    const providedCronSecret = req.headers['x-cron-secret'] || (req.headers.authorization?.startsWith('Bearer ') && !req.headers.authorization.includes('eyJ') ? req.headers.authorization.slice(7) : null);
+
+    let isAuthorized = false;
+
+    // 1. Authorized via CRON_SECRET if configured
+    if (cronSecret && providedCronSecret === cronSecret) {
+      isAuthorized = true;
+    }
+
+    // 2. Or authorized via verified Firebase Admin ID Token
+    if (!isAuthorized && req.headers.authorization?.startsWith('Bearer ')) {
+      const idToken = req.headers.authorization.slice(7);
+      try {
+        const uid = await verifyFirebaseIdToken(idToken);
+        if (uid) {
+          isAuthorized = true;
+        }
+      } catch (authErr) {
+        console.warn('[Server] Unauthorized entitlements recalculation attempt:', authErr);
+      }
+    }
+
+    if (!isAuthorized) {
+      return res.status(401).json({ error: 'Accès non autorisé. Jeton administrateur requis.' });
+    }
+
+    const { recalculateAllEntitlements } = await import('./src/server/entitlementsService.ts');
+    const summary = await recalculateAllEntitlements();
+    return res.json({ success: true, summary });
+  } catch (err: any) {
+    console.error('Error in /api/admin/recalculate-entitlements:', err);
+    return res.status(500).json({ error: err?.message || 'Erreur lors du recalcul des droits' });
+  }
+});
+
 // START SERVER WITH VITE (DEV) OR STATIC DIST (PROD)
 async function startServer() {
   const isProd = process.env.NODE_ENV === 'production';
@@ -335,6 +376,32 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`WhatsApp Commercial AI backend running on http://0.0.0.0:${PORT}`);
+
+    // Scheduled background subscription & expiration verification (runs every 60 min, or custom ENTITLEMENTS_INTERVAL_MS)
+    const intervalMs = Number(process.env.ENTITLEMENTS_INTERVAL_MS) || 60 * 60 * 1000;
+    // Delayed initial verification 15s after boot
+    setTimeout(async () => {
+      try {
+        const { recalculateAllEntitlements } = await import('./src/server/entitlementsService.ts');
+        console.log('[Entitlements Engine] Running initial subscription expiration sync...');
+        const s = await recalculateAllEntitlements();
+        console.log(`[Entitlements Engine] Initial sync: ${s.updatedPublicStores} stores updated (${s.fullCatalogCount} full, ${s.restrictedCount} restricted).`);
+      } catch (err) {
+        console.warn('[Entitlements Engine] Initial sync error:', err);
+      }
+    }, 15000);
+
+    // Periodic interval
+    setInterval(async () => {
+      try {
+        const { recalculateAllEntitlements } = await import('./src/server/entitlementsService.ts');
+        console.log('[Entitlements Engine] Running scheduled subscription expiration sync...');
+        const s = await recalculateAllEntitlements();
+        console.log(`[Entitlements Engine] Scheduled sync: ${s.updatedPublicStores} stores updated (${s.fullCatalogCount} full, ${s.restrictedCount} restricted).`);
+      } catch (err) {
+        console.warn('[Entitlements Engine] Scheduled sync error:', err);
+      }
+    }, intervalMs);
   });
 }
 

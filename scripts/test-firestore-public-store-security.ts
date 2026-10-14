@@ -15,6 +15,7 @@ import fs from 'fs';
 import { FirestoreService } from '../src/services/firestoreService';
 import { ApiService, normalizeVendeur } from '../src/services/api';
 import { Vendeur, PublicStoreProfile } from '../src/types';
+import { computeVendorEntitlements } from '../src/server/entitlementsService';
 
 console.log('🛡️  DÉBUT DU TEST DE SÉCURITÉ FIRESTORE ET CONFIDENTIALITÉ DES BOUTIQUES PUBLIQUES...\n');
 
@@ -123,9 +124,9 @@ function evaluateFirestoreRule(params: {
       if (!isOwner) return { allowed: false, reason: 'Un vendeur ne peut pas créer la boutique d’un autre vendeur' };
       if (incomingData?.id !== targetDocId) return { allowed: false, reason: 'ID discordant' };
 
-      // Vérification du statut de la boutique
-      if (existingData?.vendorStatus === 'Inactif' || existingData?.vendorStatus === 'Suspendu') {
-        return { allowed: false, reason: 'Boutique suspendue : création publique interdite' };
+      // Vérification du statut de la boutique (exige un compte existant et non suspendu)
+      if (existingData?.userExists === false || existingData?.vendorStatus === 'Inactif' || existingData?.vendorStatus === 'Suspendu') {
+        return { allowed: false, reason: 'Boutique suspendue ou profil vendeur absent : création publique interdite' };
       }
 
       // Un vendeur ne peut JAMAIS créer hasFullCatalog: true
@@ -181,16 +182,16 @@ function evaluateFirestoreRule(params: {
     if (operation === 'get' || operation === 'list') {
       return { allowed: true, reason: 'Lecture publique des produits autorisée' };
     }
-    const isVendorSuspended = existingData?.vendorStatus === 'Inactif' || existingData?.vendorStatus === 'Suspendu';
+    const isVendorSuspended = existingData?.userExists === false || existingData?.vendorStatus === 'Inactif' || existingData?.vendorStatus === 'Suspendu';
     if (operation === 'create') {
       if (!isOwner) return { allowed: false, reason: 'Seul le propriétaire peut créer des produits' };
-      if (isVendorSuspended) return { allowed: false, reason: 'Boutique suspendue : création de produit interdite' };
+      if (isVendorSuspended) return { allowed: false, reason: 'Boutique suspendue ou profil vendeur absent : création de produit interdite' };
       return { allowed: true, reason: 'Création de produit autorisée' };
     }
     if (operation === 'update') {
       if (isAdmin) return { allowed: true, reason: 'Admin autorisé' };
       if (!isOwner) return { allowed: false, reason: 'Modification non propriétaire interdite' };
-      if (isVendorSuspended) return { allowed: false, reason: 'Boutique suspendue : modification de produit interdite' };
+      if (isVendorSuspended) return { allowed: false, reason: 'Boutique suspendue ou profil vendeur absent : modification de produit interdite' };
       return { allowed: true, reason: 'Modification de produit autorisée' };
     }
     if (operation === 'delete') {
@@ -731,4 +732,240 @@ runTest('21. firestore.rules applique allow delete: if isAdmin() sur /publicStor
   assert.ok(!publicStoreBlock.includes('allow delete: if isOwner(uid) || isAdmin();'), 'isOwner ne doit pas pouvoir supprimer publicStores');
 });
 
+// ===========================================================================
+// ÉTAPE A3.2 : TESTS D'EXPIRATION DES ESSAIS, ABONNEMENTS ET COHÉRENCE SERVEUR
+// ===========================================================================
+
+runTest('22. Expiration essai : Passage explicite d’essai valide à expiré et troncature sans suppression', () => {
+  const vendorId = 'vend_trial_transition';
+  const sampleProducts = [
+    { id: 'p1', name: 'Produit 1', price: 100 },
+    { id: 'p2', name: 'Produit 2', price: 100 },
+    { id: 'p3', name: 'Produit 3', price: 100 },
+    { id: 'p4', name: 'Produit 4', price: 100 },
+    { id: 'p5', name: 'Produit 5', price: 100 },
+    { id: 'p6', name: 'Produit 6', price: 100 },
+  ];
+
+  // État 1 : Essai valide (date dans le futur)
+  const validTrialUser = {
+    uid: vendorId,
+    name: 'Boutique Transition Essai',
+    status: 'Actif',
+    plan: 'Essai',
+    trialStartedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+    trialEndsAt: new Date(Date.now() + 5 * 86400000).toISOString(),
+    date_expiration_essai: new Date(Date.now() + 5 * 86400000).toISOString(),
+  };
+
+  const validPublic = FirestoreService.sanitizePublicStore(vendorId, validTrialUser);
+  assert.strictEqual(validPublic.hasFullCatalog, true, 'Un essai en cours doit donner hasFullCatalog: true');
+  assert.strictEqual(validPublic.is_active, true, 'Boutique en essai actif doit être is_active: true');
+  const validDisplayProducts = validPublic.hasFullCatalog ? sampleProducts : sampleProducts.slice(0, 4);
+  assert.strictEqual(validDisplayProducts.length, 6, 'L’essai valide affiche la totalité des 6 produits');
+
+  // État 2 : Essai expiré (date dans le passé)
+  const expiredTrialUser = {
+    ...validTrialUser,
+    trialEndsAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+    date_expiration_essai: new Date(Date.now() - 1 * 86400000).toISOString(),
+  };
+
+  const expiredPublic = FirestoreService.sanitizePublicStore(vendorId, expiredTrialUser);
+  assert.strictEqual(expiredPublic.hasFullCatalog, false, 'Un essai expiré doit strictement passer hasFullCatalog à false');
+  assert.strictEqual(expiredPublic.is_active, true, 'Boutique expirée reste active (ouverte avec catalogue réduit)');
+  
+  // Troncature d'affichage : les produits existent toujours, seul l'affichage est limité à 4
+  const expiredDisplayProducts = expiredPublic.hasFullCatalog ? sampleProducts : sampleProducts.slice(0, 4);
+  assert.strictEqual(expiredDisplayProducts.length, 4, 'La boutique expirée affiche au maximum 4 produits');
+  assert.strictEqual(sampleProducts.length, 6, 'Les 6 produits d’origine restent préservés intacts dans Firestore');
+});
+
+runTest('23. Expiration VIP : Passage explicite de VIP valide à VIP expiré', () => {
+  const vendorId = 'vend_vip_transition';
+
+  // État 1 : VIP valide
+  const validVipUser = {
+    uid: vendorId,
+    name: 'Boutique Mode VIP',
+    status: 'VIP',
+    plan: 'VIP',
+    vipStartedAt: new Date(Date.now() - 10 * 86400000).toISOString(),
+    vipEndsAt: new Date(Date.now() + 20 * 86400000).toISOString(),
+  };
+  const validVipPublic = FirestoreService.sanitizePublicStore(vendorId, validVipUser);
+  assert.strictEqual(validVipPublic.hasFullCatalog, true, 'VIP valide doit avoir hasFullCatalog: true');
+  assert.strictEqual(validVipPublic.is_active, true, 'VIP valide doit être actif');
+
+  // État 2 : VIP expiré
+  const expiredVipUser = {
+    ...validVipUser,
+    vipEndsAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+  };
+  const expiredVipPublic = FirestoreService.sanitizePublicStore(vendorId, expiredVipUser);
+  assert.strictEqual(expiredVipPublic.hasFullCatalog, false, 'VIP expiré doit voir hasFullCatalog retomber à false');
+  assert.strictEqual(expiredVipPublic.is_active, true, 'VIP expiré conserve sa boutique active en mode gratuit limité');
+});
+
+runTest('24. Statuts administratifs : Compte suspendu / inactif désactive la boutique', () => {
+  const suspendedUser = {
+    uid: 'vend_suspended',
+    name: 'Boutique Suspendue',
+    status: 'Suspendu',
+    plan: 'VIP', // Même si abonnement VIP présent, la suspension administrative l'emporte !
+  };
+  const suspendedPublic = FirestoreService.sanitizePublicStore('vend_suspended', suspendedUser);
+  assert.strictEqual(suspendedPublic.is_active, false, 'Un compte suspendu doit être is_active: false');
+  assert.strictEqual(suspendedPublic.hasFullCatalog, false, 'Un compte suspendu ne doit pas avoir hasFullCatalog: true');
+
+  const inactiveUser = {
+    uid: 'vend_inactive',
+    name: 'Boutique Inactive',
+    status: 'Inactif',
+    plan: 'Essai',
+  };
+  const inactivePublic = FirestoreService.sanitizePublicStore('vend_inactive', inactiveUser);
+  assert.strictEqual(inactivePublic.is_active, false, 'Un compte inactif doit être is_active: false');
+  assert.strictEqual(inactivePublic.hasFullCatalog, false, 'Un compte inactif ne doit pas avoir hasFullCatalog: true');
+});
+
+runTest('25. Compte gratuit : hasFullCatalog: false et is_active: true', () => {
+  const freeUser = {
+    uid: 'vend_free',
+    name: 'Boutique Gratuite Permanente',
+    status: 'Gratuit',
+    plan: 'Gratuit',
+  };
+  const freePublic = FirestoreService.sanitizePublicStore('vend_free', freeUser);
+  assert.strictEqual(freePublic.is_active, true, 'Un compte gratuit reste actif');
+  assert.strictEqual(freePublic.hasFullCatalog, false, 'Un compte gratuit est limité (hasFullCatalog: false)');
+});
+
+runTest('26. Robustesse document privé absent : is_active: false et hasFullCatalog: false', () => {
+  // 1. Service : document absent {}
+  const absentPublic = FirestoreService.sanitizePublicStore('vend_absent', {});
+  assert.strictEqual(absentPublic.is_active, false, 'Un document vendeur absent ne peut pas être actif');
+  assert.strictEqual(absentPublic.hasFullCatalog, false, 'Un document vendeur absent ne peut pas avoir plein catalogue');
+
+  // 2. Règles Firestore : isVendorActive(uid) exige l’existence de users/{uid}
+  const rules = fs.readFileSync('firestore.rules', 'utf8');
+  assert.ok(rules.includes('exists(/databases/$(database)/documents/users/$(uid))'), 'isVendorActive doit exiger exists() sur users');
+
+  const absentUserCreateProduct = evaluateFirestoreRule({
+    collection: 'products',
+    operation: 'create',
+    targetDocId: 'non_existent_user',
+    auth: { uid: 'non_existent_user' },
+    incomingData: { name: 'Produit fantôme', vendeur_id: 'non_existent_user' },
+    existingData: { userExists: false },
+  });
+  assert.strictEqual(absentUserCreateProduct.allowed, false, 'Création de produit interdite si le profil vendeur est absent');
+});
+
+runTest('27. Sécurité Firestore : Échec des tentatives de prolongation d’essai et d’auto-attribution VIP', () => {
+  const sellerAuth: AuthContext = { uid: 'seller_sneaky' };
+  const existingUserDoc = {
+    uid: 'seller_sneaky',
+    status: 'Actif',
+    plan: 'Essai',
+    trialStartedAt: '2026-10-01T10:00:00.000Z',
+    trialEndsAt: '2026-10-08T10:00:00.000Z',
+  };
+
+  // 1. Tentative d'auto-prolongation de l'essai dans users/{uid}
+  const updateTrialRes = evaluateFirestoreRule({
+    collection: 'users',
+    operation: 'update',
+    targetDocId: 'seller_sneaky',
+    auth: sellerAuth,
+    incomingData: {
+      ...existingUserDoc,
+      trialEndsAt: '2099-01-01T00:00:00.000Z',
+    },
+    existingData: existingUserDoc,
+  });
+  assert.strictEqual(updateTrialRes.allowed, false, 'Le vendeur ne peut pas prolonger son essai');
+  assert.ok(updateTrialRes.reason.includes('sensibles'));
+
+  // 2. Tentative d'auto-attribution de statut VIP dans users/{uid}
+  const updateVipRes = evaluateFirestoreRule({
+    collection: 'users',
+    operation: 'update',
+    targetDocId: 'seller_sneaky',
+    auth: sellerAuth,
+    incomingData: {
+      ...existingUserDoc,
+      status: 'VIP',
+      plan: 'VIP',
+    },
+    existingData: existingUserDoc,
+  });
+  assert.strictEqual(updateVipRes.allowed, false, 'Le vendeur ne peut pas s’auto-attribuer le statut VIP');
+
+  // 3. Tentative d'auto-attribution de hasFullCatalog dans publicStores/{uid}
+  const updatePublicRes = evaluateFirestoreRule({
+    collection: 'publicStores',
+    operation: 'update',
+    targetDocId: 'seller_sneaky',
+    auth: sellerAuth,
+    incomingData: {
+      id: 'seller_sneaky',
+      hasFullCatalog: true,
+    },
+    existingData: {
+      id: 'seller_sneaky',
+      hasFullCatalog: false,
+      is_active: true,
+    },
+  });
+  assert.strictEqual(updatePublicRes.allowed, false, 'Le vendeur ne peut pas modifier hasFullCatalog sur publicStores');
+});
+
+runTest('28. Moteur Serveur : computeVendorEntitlements évalue fidèlement tous les statuts', () => {
+  const now = Date.now();
+
+  // A. VIP valide
+  const res1 = computeVendorEntitlements({ uid: 'u1', status: 'VIP', plan: 'VIP', vipEndsAt: new Date(now + 100000).toISOString() }, now);
+  assert.strictEqual(res1.hasFullCatalog, true);
+  assert.strictEqual(res1.is_active, true);
+  assert.strictEqual(res1.reason, 'vip_active');
+
+  // B. VIP expiré
+  const res2 = computeVendorEntitlements({ uid: 'u2', status: 'VIP', plan: 'VIP', vipEndsAt: new Date(now - 100000).toISOString() }, now);
+  assert.strictEqual(res2.hasFullCatalog, false);
+  assert.strictEqual(res2.is_active, true);
+  assert.strictEqual(res2.reason, 'vip_expired');
+
+  // C. Essai valide
+  const res3 = computeVendorEntitlements({ uid: 'u3', status: 'Actif', plan: 'Essai', trialEndsAt: new Date(now + 100000).toISOString() }, now);
+  assert.strictEqual(res3.hasFullCatalog, true);
+  assert.strictEqual(res3.is_active, true);
+  assert.strictEqual(res3.reason, 'trial_active');
+
+  // D. Essai expiré
+  const res4 = computeVendorEntitlements({ uid: 'u4', status: 'Actif', plan: 'Essai', trialEndsAt: new Date(now - 100000).toISOString() }, now);
+  assert.strictEqual(res4.hasFullCatalog, false);
+  assert.strictEqual(res4.is_active, true);
+  assert.strictEqual(res4.reason, 'trial_expired');
+
+  // E. Suspendu
+  const res5 = computeVendorEntitlements({ uid: 'u5', status: 'Suspendu', plan: 'VIP' }, now);
+  assert.strictEqual(res5.hasFullCatalog, false);
+  assert.strictEqual(res5.is_active, false);
+  assert.strictEqual(res5.reason, 'suspended');
+
+  // F. Gratuit
+  const res6 = computeVendorEntitlements({ uid: 'u6', status: 'Gratuit', plan: 'Gratuit' }, now);
+  assert.strictEqual(res6.hasFullCatalog, false);
+  assert.strictEqual(res6.is_active, true);
+  assert.strictEqual(res6.reason, 'free_tier');
+
+  // G. Document absent
+  const res7 = computeVendorEntitlements(null, now);
+  assert.strictEqual(res7.hasFullCatalog, false);
+  assert.strictEqual(res7.is_active, false);
+  assert.strictEqual(res7.reason, 'user_absent');
+});
+
 console.log(`\n🎉 TOUS LES ${passedTests} TESTS DE SÉCURITÉ FIRESTORE ET CONFIDENTIALITÉ ONT RÉUSSI !\n`);
+

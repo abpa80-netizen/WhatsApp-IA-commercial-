@@ -178,6 +178,12 @@ export const ApiService = {
     return await FirestoreService.migrateAllVendorsToPublicStores();
   },
 
+  // 4d. Admin: Recalculate Subscription & Trial Expirations
+  async recalculateEntitlements(): Promise<{ total: number; updated: number; fullCatalog: number; restricted: number; suspended: number; errors: number }> {
+    this.ensureAdminUser();
+    return await FirestoreService.recalculateAllVendorsEntitlements();
+  },
+
   // 5. Update Branding
   async updateBranding(vendeurId: string, data: Partial<Vendeur>): Promise<Vendeur> {
     const cleanId = vendeurId.trim();

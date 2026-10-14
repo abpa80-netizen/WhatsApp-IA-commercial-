@@ -237,10 +237,28 @@ export const FirestoreService = {
   // Strictly Sanitized: No private login phone, no CRM, no auth data, no internal subscription timestamps
   // ----------------------------------------------------
   sanitizePublicStore(uid: string, d: Record<string, any>): PublicStoreProfile {
+    // 0. Handle absent or empty private vendor document
+    const isDocAbsent = !d || Object.keys(d).length === 0;
+    if (isDocAbsent) {
+      return {
+        id: uid,
+        name: `Boutique`,
+        slogan: '',
+        location: '',
+        logo: '',
+        currency: (d?.currency as CurrencyType) || 'MAD',
+        is_active: false,
+        hasFullCatalog: false,
+        publicSlug: uid,
+        orderWhatsApp: undefined,
+        allowCommercialContact: false,
+      };
+    }
+
     // 1. Calculate minimal catalog activation info:
     // Determine if full catalog is allowed or restricted to 4 products without exposing internal dates or plans.
     // Suspended or inactive accounts are strictly deactivated (is_active: false, hasFullCatalog: false).
-    const isSuspended = d.status === 'Inactif' || d.status === 'Suspendu';
+    const isSuspended = d.status === 'Inactif' || d.status === 'Suspendu' || d.is_active === false;
     const isVip = (d.status === 'VIP' || d.plan === 'VIP') && !isSuspended;
     let fullCatalog = false;
 
@@ -260,7 +278,7 @@ export const FirestoreService = {
         const ageDays = (Date.now() - new Date(created).getTime()) / 86400000;
         fullCatalog = ageDays <= 14;
       } else {
-        fullCatalog = true;
+        fullCatalog = false;
       }
     } else if (typeof d.hasFullCatalog === 'boolean' && !('status' in d) && !('plan' in d)) {
       // Reading from an already verified /publicStores document
@@ -485,6 +503,76 @@ export const FirestoreService = {
     } catch (err) {
       console.error('[FirestoreService] Migration batch failed:', err);
       return { total: 0, migrated: 0, errors: 1 };
+    }
+  },
+
+  /**
+   * Recalculates subscription entitlements for all merchants from the private users/ collection
+   * and synchronizes hasFullCatalog and is_active to publicStores/.
+   * Strictly enforces trial and VIP expiration: drops hasFullCatalog to false once trialEndsAt or vipEndsAt is passed.
+   */
+  async recalculateAllVendorsEntitlements(): Promise<{
+    total: number;
+    updated: number;
+    fullCatalog: number;
+    restricted: number;
+    suspended: number;
+    errors: number;
+  }> {
+    try {
+      const snap = await getDocs(collection(db, 'users'));
+      let updated = 0;
+      let fullCatalog = 0;
+      let restricted = 0;
+      let suspended = 0;
+      let errors = 0;
+
+      for (const d of snap.docs) {
+        try {
+          const userData = d.data();
+          const sanitized = this.sanitizePublicStore(d.id, userData);
+
+          if (sanitized.is_active && sanitized.hasFullCatalog) {
+            fullCatalog++;
+          } else if (sanitized.is_active) {
+            restricted++;
+          } else {
+            suspended++;
+          }
+
+          // Fetch current publicStore doc to check if update is needed
+          const storeRef = doc(db, 'publicStores', d.id);
+          const storeSnap = await getDoc(storeRef);
+
+          if (!storeSnap.exists() ||
+              storeSnap.data().hasFullCatalog !== sanitized.hasFullCatalog ||
+              storeSnap.data().is_active !== sanitized.is_active) {
+            await setDoc(storeRef, {
+              id: d.id,
+              name: sanitized.name,
+              slogan: sanitized.slogan,
+              location: sanitized.location,
+              logo: sanitized.logo,
+              currency: sanitized.currency,
+              is_active: sanitized.is_active,
+              hasFullCatalog: sanitized.hasFullCatalog,
+              publicSlug: sanitized.publicSlug,
+              orderWhatsApp: sanitized.orderWhatsApp || null,
+              allowCommercialContact: Boolean(sanitized.allowCommercialContact),
+              updatedAt: new Date().toISOString(),
+            }, { merge: true });
+            updated++;
+          }
+        } catch (e) {
+          console.error(`[FirestoreService] Recalculation error for user ${d.id}:`, e);
+          errors++;
+        }
+      }
+
+      return { total: snap.size, updated, fullCatalog, restricted, suspended, errors };
+    } catch (err) {
+      console.error('[FirestoreService] Recalculate batch failed:', err);
+      return { total: 0, updated: 0, fullCatalog: 0, restricted: 0, suspended: 0, errors: 1 };
     }
   },
 
