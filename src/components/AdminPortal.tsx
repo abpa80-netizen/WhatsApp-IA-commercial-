@@ -80,7 +80,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   // Config editing state with safe defaults
   const [priceVip, setPriceVip] = useState(config?.vipPrice ?? config?.price_vip ?? 199);
   const [priceVipCfa, setPriceVipCfa] = useState(config?.vipPriceCfa ?? config?.price_vip_cfa ?? 12000);
-  const [trialDays, setTrialDays] = useState(config?.trialDays ?? config?.trial_days ?? 7);
+  const trialDays = 3;
   const [whatsappSupport, setWhatsappSupport] = useState(config?.supportWhatsapp || config?.whatsapp_support || '+212600000000');
   const [savingConfig, setSavingConfig] = useState(false);
   // These hooks must remain above every conditional return to preserve React hook order.
@@ -95,9 +95,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       }
       if (config.vipPriceCfa !== undefined || config.price_vip_cfa !== undefined) {
         setPriceVipCfa(config.vipPriceCfa ?? config.price_vip_cfa!);
-      }
-      if (config.trialDays !== undefined || config.trial_days !== undefined) {
-        setTrialDays(config.trialDays ?? config.trial_days!);
       }
       if (config.supportWhatsapp || config.whatsapp_support) {
         setWhatsappSupport(config.supportWhatsapp || config.whatsapp_support || '+212600000000');
@@ -508,11 +505,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       const updated = await onUpdateConfig({
         price_vip: Number(priceVip),
         price_vip_cfa: Number(priceVipCfa),
-        trial_days: Number(trialDays),
+        trial_days: 3,
         whatsapp_support: whatsappSupport.trim(),
         vipPrice: Number(priceVip),
         vipPriceCfa: Number(priceVipCfa),
-        trialDays: Number(trialDays),
+        trialDays: 3,
         supportWhatsapp: whatsappSupport.trim(),
       });
       if (updated) {
@@ -521,9 +518,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         }
         if (updated.vipPriceCfa !== undefined || updated.price_vip_cfa !== undefined) {
           setPriceVipCfa(updated.vipPriceCfa ?? updated.price_vip_cfa!);
-        }
-        if (updated.trialDays !== undefined || updated.trial_days !== undefined) {
-          setTrialDays(updated.trialDays ?? updated.trial_days!);
         }
         if (updated.supportWhatsapp || updated.whatsapp_support) {
           setWhatsappSupport(updated.supportWhatsapp || updated.whatsapp_support || whatsappSupport);
@@ -971,17 +965,10 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Durée Essai Gratuit (Jours)
-              </label>
-              <input
-                type="number"
-                value={trialDays}
-                onChange={(e) => setTrialDays(Number(e.target.value))}
-                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-[#25D366]"
-                required
-              />
+            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-3">
+              <div className="text-xs font-semibold text-emerald-300">Essai gratuit fixe</div>
+              <div className="mt-1 text-sm font-bold text-white">3 jours à partir de l’inscription</div>
+              <p className="mt-1 text-[11px] text-slate-400">La durée n’est pas modifiable depuis cet écran.</p>
             </div>
 
             <div>
@@ -1126,7 +1113,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-slate-400">
-                  Surveillance du compte à rebours et activation VIP immédiate (Durée globale : {config.trialDays || config.trial_days ? `${config.trialDays || config.trial_days} jours` : 'configurée dans les paramètres' }).
+                  Surveillance du compte à rebours et activation VIP immédiate (Durée globale : 3 jours).
                 </p>
               </div>
             </div>
@@ -1159,9 +1146,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 <tbody className="divide-y divide-slate-800 bg-slate-900/40">
                   {trialVendors.map((v) => {
                     if (!v) return null;
-                    // Use the configured trial duration from the actual trial start.
-                    // A persisted trialEndsAt may be stale after the administrator changes trialDays.
-                    const configuredTrialDays = Math.max(0, Number(trialDays ?? config?.trialDays ?? config?.trial_days ?? 7));
+                    // Use the fixed three-day trial duration from the actual trial start.
+                    const configuredTrialDays = 3;
                     const trialStartValue = v.trialStartedAt || v.createdAt || v.created_at;
                     const trialStartMs = trialStartValue ? new Date(trialStartValue).getTime() : Number.NaN;
                     const storedExpirationValue = v.trialEndsAt || v.date_expiration_essai;

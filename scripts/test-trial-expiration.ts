@@ -41,6 +41,31 @@ assert(
   'A shortened trial expires at the newly configured duration despite stale future trialEndsAt'
 );
 
+const fourDaysAgo = startDaysAgo(4);
+const fixedThreeDayTrial = computeVendorEntitlements({
+  uid: 'seller-fixed-three-day-trial',
+  status: 'Actif',
+  plan: 'Essai',
+  trialStartedAt: fourDaysAgo,
+  trialEndsAt: endAfterStart(fourDaysAgo, 7), // stale legacy date
+}, now, 3);
+assert(
+  fixedThreeDayTrial.reason === 'trial_expired' && !fixedThreeDayTrial.hasFullCatalog,
+  'The fixed three-day policy expires a seller after three days even when the stored date is stale'
+);
+
+const twoDaysAgo = startDaysAgo(2);
+const activeThreeDayTrial = computeVendorEntitlements({
+  uid: 'seller-active-three-day-trial',
+  status: 'Actif',
+  plan: 'Essai',
+  trialStartedAt: twoDaysAgo,
+}, now, 3);
+assert(
+  activeThreeDayTrial.reason === 'trial_active' && activeThreeDayTrial.hasFullCatalog,
+  'The fixed three-day policy keeps a seller eligible during the first three days'
+);
+
 const eightDaysAgo = startDaysAgo(8);
 const expiredTrial = computeVendorEntitlements({
   uid: 'seller-expired-trial',

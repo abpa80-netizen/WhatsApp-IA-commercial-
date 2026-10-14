@@ -29,10 +29,10 @@ import {
 export const DEFAULT_GLOBAL_SETTINGS: SystemConfig = {
   price_vip: 199,
   price_vip_cfa: 12000,
-  trial_days: 7,
+  trial_days: 3,
   whatsapp_support: '+212600000000',
   freeProductLimit: 4,
-  trialDays: 7,
+  trialDays: 3,
   vipPrice: 199,
   vipPriceCfa: 12000,
   supportWhatsapp: '+212600000000',
@@ -48,7 +48,7 @@ export const FirestoreService = {
       const snap = await getDoc(doc(db, 'settings', 'global'));
       if (snap && snap.exists()) {
         const data = snap.data();
-        const trialDays = Number(data.trialDays ?? data.trial_days ?? 7);
+        const trialDays = 3;
         const vipPrice = Number(data.vipPrice ?? data.price_vip ?? 199);
         const vipPriceCfa = Number(data.vipPriceCfa ?? data.price_vip_cfa ?? 12000);
         const supportWhatsapp = String(data.supportWhatsapp ?? data.whatsapp_support ?? '+212600000000');
@@ -151,7 +151,7 @@ export const FirestoreService = {
         vipStartedAt: d.vipStartedAt,
         vipEndsAt: d.vipEndsAt,
         publicSlug: d.publicSlug || uid,
-        date_expiration_essai: d.trialEndsAt || d.date_expiration_essai || new Date(Date.now() + 7 * 86400000).toISOString(),
+        date_expiration_essai: d.trialEndsAt || d.date_expiration_essai || new Date(Date.now() + 3 * 86400000).toISOString(),
         useLoginNumberAsPublic: Boolean(d.useLoginNumberAsPublic),
         commercialWhatsApp: d.commercialWhatsApp || '',
         allowCommercialContact: Boolean(d.allowCommercialContact || d.useLoginNumberAsPublic),
@@ -236,7 +236,7 @@ export const FirestoreService = {
   // 2b. PUBLIC STORE PROFILE (/publicStores/{uid})
   // Strictly Sanitized: No private login phone, no CRM, no auth data, no internal subscription timestamps
   // ----------------------------------------------------
-  sanitizePublicStore(uid: string, d: Record<string, any>, configuredTrialDays: number = 7): PublicStoreProfile {
+  sanitizePublicStore(uid: string, d: Record<string, any>, configuredTrialDays: number = 3): PublicStoreProfile {
     // 0. Handle absent or empty private vendor document
     const isDocAbsent = !d || Object.keys(d).length === 0;
     if (isDocAbsent) {
@@ -269,17 +269,16 @@ export const FirestoreService = {
       fullCatalog = !vipEnd || new Date(vipEnd).getTime() > Date.now();
     } else if (d.plan === 'Gratuit' || d.status === 'Gratuit') {
       fullCatalog = false;
-    } else if (d.trialEndsAt || d.date_expiration_essai) {
-      const trialEnd = d.trialEndsAt || d.date_expiration_essai;
-      fullCatalog = new Date(trialEnd).getTime() > Date.now();
-    } else if (d.status === 'Actif' && d.plan !== 'Gratuit') {
-      const created = d.trialStartedAt || d.created_at || d.createdAt;
-      if (created) {
-        const ageDays = (Date.now() - new Date(created).getTime()) / 86400000;
-        fullCatalog = ageDays <= configuredTrialDays;
-      } else {
-        fullCatalog = false;
-      }
+    } else if (d.trialStartedAt || d.createdAt || d.created_at || d.trialEndsAt || d.date_expiration_essai) {
+      // The trial start plus the fixed duration takes precedence over stale legacy expiration fields.
+      const trialStart = d.trialStartedAt || d.createdAt || d.created_at;
+      const storedTrialEnd = d.trialEndsAt || d.date_expiration_essai;
+      const startMs = trialStart ? new Date(trialStart).getTime() : Number.NaN;
+      const storedEndMs = storedTrialEnd ? new Date(storedTrialEnd).getTime() : Number.NaN;
+      const trialEndMs = Number.isFinite(startMs)
+        ? startMs + configuredTrialDays * 86400000
+        : storedEndMs;
+      fullCatalog = Number.isFinite(trialEndMs) && trialEndMs > Date.now();
     } else if (typeof d.hasFullCatalog === 'boolean' && !('status' in d) && !('plan' in d)) {
       // Reading from an already verified /publicStores document
       fullCatalog = d.hasFullCatalog;
@@ -521,13 +520,7 @@ export const FirestoreService = {
   }> {
     try {
       const snap = await getDocs(collection(db, 'users'));
-      let dynamicTrialDays = 7;
-      try {
-        const globalConfig = await this.getGlobalSettings();
-        dynamicTrialDays = Number(globalConfig.trialDays ?? globalConfig.trial_days ?? 7);
-      } catch {
-        dynamicTrialDays = 7;
-      }
+      const dynamicTrialDays = 3;
 
       let updated = 0;
       let fullCatalog = 0;

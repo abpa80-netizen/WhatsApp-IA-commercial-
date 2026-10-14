@@ -9,7 +9,7 @@ import {
   sendPasswordResetEmail,
   FirebaseUser 
 } from '../firebase';
-import { FirestoreService, DEFAULT_GLOBAL_SETTINGS } from './firestoreService';
+import { FirestoreService } from './firestoreService';
 import { Vendeur } from '../types';
 
 export const ADMIN_EMAIL = 'foosco80@gmail.com';
@@ -149,14 +149,8 @@ export const AuthService = {
 
     const uid = userCred.user.uid;
 
-    // 6. Fetch dynamic trial configuration from global settings
-    let trialDays = 7;
-    try {
-      const globalConfig = await FirestoreService.getGlobalSettings();
-      trialDays = globalConfig.trialDays ?? globalConfig.trial_days ?? 7;
-    } catch (e) {
-      console.warn('Could not read dynamic trial configuration, using default of 7 days:', e);
-    }
+    // Fixed commercial policy: every new seller receives exactly 3 days of trial.
+    const trialDays = 3;
 
     const now = new Date().toISOString();
     const trialEndsAt = new Date(Date.now() + trialDays * 86400000).toISOString();
@@ -252,8 +246,8 @@ export const AuthService = {
     // If user is authenticated in Firebase Auth but profile document was missing or interrupted during previous registration
     if (!profile) {
       console.warn(`User ${uid} authenticated but missing Firestore profile. Restoring seller profile safely.`);
-      const config = await FirestoreService.getGlobalSettings().catch(() => DEFAULT_GLOBAL_SETTINGS);
-      const trialDays = config.trialDays ?? config.trial_days ?? 7;
+      // Recovery must preserve the same fixed 3-day trial policy.
+      const trialDays = 3;
       const now = new Date().toISOString();
       const trialEndsAt = new Date(Date.now() + trialDays * 86400000).toISOString();
       const cleanDigits = phoneNorm.cleanDigits;
