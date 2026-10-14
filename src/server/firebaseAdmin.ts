@@ -81,6 +81,19 @@ export function getAdminDb(): Firestore {
       if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
         try {
           const creds = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+
+          // Vercel environment variables may preserve PEM line breaks as literal
+          // "\\n" sequences. Normalize those to real newlines before cert().
+          // Never log the credential or private key.
+          if (typeof creds.private_key === 'string') {
+            creds.private_key = creds.private_key
+              .replace(/\\\\n/g, '\n')
+              .replace(/\\r\\n/g, '\n')
+              .trim();
+          }
+          if (!creds.project_id && projectId) {
+            creds.project_id = projectId;
+          }
           initializeApp({
             credential: cert(creds),
             projectId: creds.project_id || projectId,
