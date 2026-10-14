@@ -101,8 +101,8 @@ export const BrandingSettings: React.FC<BrandingSettingsProps> = ({
         showToast(err, 'error');
         return;
       }
-      if (newPassword.trim().length < 4) {
-        const err = 'Le nouveau mot de passe doit comporter au moins 4 caractères';
+      if (newPassword.length < 6) {
+        const err = 'Le nouveau mot de passe doit comporter au moins 6 caractères';
         setErrorMessage(err);
         showToast(err, 'error');
         return;
@@ -127,11 +127,17 @@ export const BrandingSettings: React.FC<BrandingSettingsProps> = ({
         location: location.trim(),
         logo: logo.trim(),
         currency,
-        currentPassword: currentPassword ? currentPassword.trim() : undefined,
-        newPassword: newPassword ? newPassword.trim() : undefined,
       });
 
       await onUpdateBranding(updatedVendor);
+
+      if (newPassword.length > 0) {
+        try {
+          await ApiService.changePassword(vendeur.id, currentPassword, newPassword);
+        } catch (passwordErr: any) {
+          throw new Error(`Profil enregistré, mais le mot de passe n’a pas été modifié : ${passwordErr?.message || 'erreur inconnue'}`);
+        }
+      }
       
       // Reset password inputs
       setCurrentPassword('');
@@ -358,7 +364,7 @@ export const BrandingSettings: React.FC<BrandingSettingsProps> = ({
                 </label>
                 <input
                   type={showPasswords ? 'text' : 'password'}
-                  placeholder="Nouveau (min 4 car.)"
+                  placeholder="Nouveau (min 6 car.)"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#25D366]"

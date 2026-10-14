@@ -7,6 +7,9 @@ import {
   signInWithPopup, 
   googleProvider,
   sendPasswordResetEmail,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  updatePassword,
   FirebaseUser 
 } from '../firebase';
 import { FirestoreService } from './firestoreService';
@@ -281,6 +284,41 @@ export const AuthService = {
     }
 
     return profile;
+  },
+
+  /**
+   * Securely change the authenticated seller's password by reauthenticating first.
+   * Passwords are sent only to Firebase Authentication and are never written to Firestore.
+   */
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    const user = auth.currentUser;
+    if (!user || !user.email) {
+      throw new Error('Vous devez être connecté pour modifier votre mot de passe.');
+    }
+    if (!currentPassword) {
+      throw new Error('Veuillez saisir votre mot de passe actuel.');
+    }
+    const passwordCheck = validatePassword(newPassword);
+    if (!passwordCheck.isValid) {
+      throw new Error(passwordCheck.errorMessage || 'Nouveau mot de passe invalide.');
+    }
+
+    try {
+      const credential = EmailAuthProvider.credential(user.email, currentPassword);
+      await reauthenticateWithCredential(user, credential);
+      await updatePassword(user, newPassword);
+    } catch (err: any) {
+      if (err?.code === 'auth/wrong-password' || err?.code === 'auth/invalid-credential') {
+        throw new Error('Le mot de passe actuel est incorrect.');
+      }
+      if (err?.code === 'auth/weak-password') {
+        throw new Error('Le nouveau mot de passe doit comporter au moins 6 caractères.');
+      }
+      if (err?.code === 'auth/requires-recent-login') {
+        throw new Error('Pour votre sécurité, reconnectez-vous puis réessayez de modifier le mot de passe.');
+      }
+      throw new Error(err?.message || 'Impossible de modifier le mot de passe.');
+    }
   },
 
   /**

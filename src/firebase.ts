@@ -8,6 +8,9 @@ import {
   signInWithPopup,
   GoogleAuthProvider,
   sendPasswordResetEmail,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  updatePassword,
   User as FirebaseUser
 } from 'firebase/auth';
 import { 
@@ -175,6 +178,9 @@ export {
   onAuthStateChanged,
   signInWithPopup,
   sendPasswordResetEmail,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  updatePassword,
   doc,
   collection,
   setDoc,
