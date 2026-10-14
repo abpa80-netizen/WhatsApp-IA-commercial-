@@ -337,11 +337,23 @@ export const ApiService = {
   async updateProfile(vendeurId: string, data: Partial<Vendeur> & { currentPassword?: string; newPassword?: string }): Promise<Vendeur> {
     const cleanId = vendeurId.trim();
     this.ensureAuthenticatedOwner(cleanId);
-    const updated = await FirestoreService.saveUserProfile(cleanId, data);
+
+    // Never pass authentication secrets into the Firestore profile payload.
+    const profileData: Partial<Vendeur> = { ...data };
+    delete (profileData as any).currentPassword;
+    delete (profileData as any).newPassword;
+
+    const updated = await FirestoreService.saveUserProfile(cleanId, profileData);
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('wca_vendor_updated', { detail: updated }));
     }
     return updated;
+  },
+
+  async changePassword(vendeurId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const cleanId = vendeurId.trim();
+    this.ensureAuthenticatedOwner(cleanId);
+    await AuthService.changePassword(currentPassword, newPassword);
   },
 
   // 15. Admin: Delete vendor account
