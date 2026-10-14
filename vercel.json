@@ -52,10 +52,20 @@
       ]
     }
   ],
+  "crons": [
+    {
+      "path": "/api/admin/recalculate-entitlements",
+      "schedule": "0 * * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/cloudinary/sign",
       "destination": "/api/cloudinary/sign"
+    },
+    {
+      "source": "/api/admin/recalculate-entitlements",
+      "destination": "/api/admin/recalculate-entitlements"
     },
     {
       "source": "/((?!api/|sw\\.js|manifest\\.json|manifest\\.webmanifest|.*\\.(?:png|jpg|jpeg|gif|svg|ico|json|js|css|webp|woff2?)).*)",

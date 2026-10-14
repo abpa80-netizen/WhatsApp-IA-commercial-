@@ -236,7 +236,7 @@ export const FirestoreService = {
   // 2b. PUBLIC STORE PROFILE (/publicStores/{uid})
   // Strictly Sanitized: No private login phone, no CRM, no auth data, no internal subscription timestamps
   // ----------------------------------------------------
-  sanitizePublicStore(uid: string, d: Record<string, any>): PublicStoreProfile {
+  sanitizePublicStore(uid: string, d: Record<string, any>, configuredTrialDays: number = 7): PublicStoreProfile {
     // 0. Handle absent or empty private vendor document
     const isDocAbsent = !d || Object.keys(d).length === 0;
     if (isDocAbsent) {
@@ -276,7 +276,7 @@ export const FirestoreService = {
       const created = d.trialStartedAt || d.created_at || d.createdAt;
       if (created) {
         const ageDays = (Date.now() - new Date(created).getTime()) / 86400000;
-        fullCatalog = ageDays <= 14;
+        fullCatalog = ageDays <= configuredTrialDays;
       } else {
         fullCatalog = false;
       }
@@ -521,6 +521,14 @@ export const FirestoreService = {
   }> {
     try {
       const snap = await getDocs(collection(db, 'users'));
+      let dynamicTrialDays = 7;
+      try {
+        const globalConfig = await this.getGlobalSettings();
+        dynamicTrialDays = Number(globalConfig.trialDays ?? globalConfig.trial_days ?? 7);
+      } catch {
+        dynamicTrialDays = 7;
+      }
+
       let updated = 0;
       let fullCatalog = 0;
       let restricted = 0;
@@ -530,7 +538,7 @@ export const FirestoreService = {
       for (const d of snap.docs) {
         try {
           const userData = d.data();
-          const sanitized = this.sanitizePublicStore(d.id, userData);
+          const sanitized = this.sanitizePublicStore(d.id, userData, dynamicTrialDays);
 
           if (sanitized.is_active && sanitized.hasFullCatalog) {
             fullCatalog++;

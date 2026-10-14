@@ -181,6 +181,37 @@ export const ApiService = {
   // 4d. Admin: Recalculate Subscription & Trial Expirations
   async recalculateEntitlements(): Promise<{ total: number; updated: number; fullCatalog: number; restricted: number; suspended: number; errors: number }> {
     this.ensureAdminUser();
+
+    // 1. Attempt server API execution with authenticated admin Firebase ID token
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (token) {
+        const res = await fetch('/api/admin/recalculate-entitlements', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.summary) {
+            return {
+              total: data.summary.totalUsersScanned,
+              updated: data.summary.updatedPublicStores,
+              fullCatalog: data.summary.fullCatalogCount,
+              restricted: data.summary.restrictedCount,
+              suspended: data.summary.deactivatedCount,
+              errors: data.summary.errors,
+            };
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[ApiService] Server endpoint recalculation not reachable, using direct admin Firestore transaction:', err);
+    }
+
+    // 2. Direct authenticated admin Firestore execution (strictly authorized by firestore.rules for foosco80@gmail.com)
     return await FirestoreService.recalculateAllVendorsEntitlements();
   },
 

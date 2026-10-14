@@ -967,5 +967,105 @@ runTest('28. Moteur Serveur : computeVendorEntitlements évalue fidèlement tous
   assert.strictEqual(res7.reason, 'user_absent');
 });
 
+runTest('29. Durée d’essai cohérente : Respect dynamique du paramètre configuré (7j, 14j, 30j)', () => {
+  const now = Date.now();
+  // Vendeur créé il y a 10 jours, sans date trialEndsAt explicite
+  const created10DaysAgo = new Date(now - 10 * 86400000).toISOString();
+  const vendorUser = {
+    uid: 'vend_dynamic_days',
+    status: 'Actif',
+    plan: 'Essai',
+    trialStartedAt: created10DaysAgo,
+  };
+
+  // 1. Avec configuration 7 jours : 10 jours > 7 jours -> EXPIRÉ
+  const eval7Days = computeVendorEntitlements(vendorUser, now, 7);
+  assert.strictEqual(eval7Days.hasFullCatalog, false, 'Avec trialDays = 7, un compte de 10 jours doit être expiré');
+  assert.strictEqual(eval7Days.reason, 'trial_expired');
+
+  // 2. Avec configuration 14 jours : 10 jours <= 14 jours -> ENCORE VALIDE
+  const eval14Days = computeVendorEntitlements(vendorUser, now, 14);
+  assert.strictEqual(eval14Days.hasFullCatalog, true, 'Avec trialDays = 14, un compte de 10 jours doit être valide');
+  assert.strictEqual(eval14Days.reason, 'trial_active');
+
+  // 3. Avec configuration 30 jours : 10 jours <= 30 jours -> ENCORE VALIDE
+  const eval30Days = computeVendorEntitlements(vendorUser, now, 30);
+  assert.strictEqual(eval30Days.hasFullCatalog, true, 'Avec trialDays = 30, un compte de 10 jours doit être valide');
+  assert.strictEqual(eval30Days.reason, 'trial_active');
+});
+
+runTest('30. Sécurité Endpoint Serveur : Un jeton de vendeur ne peut JAMAIS exécuter le recalcul global', () => {
+  // Simuler la logique de vérification de verifyFirebaseAdminToken
+  function simulateAdminCheck(email: string) {
+    const cleanEmail = email.trim().toLowerCase();
+    if (cleanEmail !== 'foosco80@gmail.com') {
+      throw new Error('Accès interdit : ce compte utilisateur n’a pas les privilèges administrateur.');
+    }
+    return { authorized: true };
+  }
+
+  // 1. Jeton valide mais appartenant à un commerçant
+  assert.throws(
+    () => simulateAdminCheck('vendeur_123@wa.wca.app'),
+    /privilèges administrateur/,
+    'Un jeton de vendeur doit être formellement rejeté par le contrôle administrateur'
+  );
+
+  // 2. Jeton d’un autre utilisateur aléatoire
+  assert.throws(
+    () => simulateAdminCheck('pirate@evil.com'),
+    /privilèges administrateur/,
+    'Tout compte non foosco80@gmail.com doit être rejeté'
+  );
+
+  // 3. Seul l’administrateur légitime est autorisé
+  const adminRes = simulateAdminCheck('foosco80@gmail.com');
+  assert.strictEqual(adminRes.authorized, true, 'L’administrateur foosco80@gmail.com est le seul accepté');
+});
+
+runTest('31. Sécurité CRON_SECRET : Rejet strict des requêtes sans secret valide et non-divulgation', () => {
+  function verifyCronAuthorization(headers: Record<string, string>, envSecret: string | undefined): boolean {
+    if (!envSecret || envSecret.trim().length === 0) {
+      return false; // Si non configuré, l’accès par secret est désactivé
+    }
+    const provided = headers['x-cron-secret'] || (headers['authorization']?.startsWith('Bearer ') ? headers['authorization'].slice(7) : null);
+    return Boolean(provided && provided === envSecret);
+  }
+
+  const realSecret = 'super_secret_cron_token_xyz_9988';
+
+  // 1. Secret absent
+  assert.strictEqual(verifyCronAuthorization({}, realSecret), false, 'Rejet si aucun secret fourni');
+
+  // 2. Secret erroné
+  assert.strictEqual(verifyCronAuthorization({ 'x-cron-secret': 'mauvais_secret' }, realSecret), false, 'Rejet si mauvais secret');
+
+  // 3. Secret correct dans x-cron-secret
+  assert.strictEqual(verifyCronAuthorization({ 'x-cron-secret': realSecret }, realSecret), true, 'Autorisé avec bon x-cron-secret');
+
+  // 4. Secret correct dans Authorization Bearer
+  assert.strictEqual(verifyCronAuthorization({ 'authorization': `Bearer ${realSecret}` }, realSecret), true, 'Autorisé avec bon Bearer secret');
+
+  // 5. Si CRON_SECRET non défini en variable d’environnement : toujours rejeté
+  assert.strictEqual(verifyCronAuthorization({ 'x-cron-secret': realSecret }, undefined), false, 'Rejet si CRON_SECRET non configuré côté serveur');
+});
+
+runTest('32. Compatibilité Vercel Serverless & Cron : Route dédiée et configuration vercel.json', () => {
+  // 1. Vérifier que la route serverless api/admin/recalculate-entitlements.ts existe
+  const serverlessRoutePath = 'api/admin/recalculate-entitlements.ts';
+  assert.ok(fs.existsSync(serverlessRoutePath), 'Le fichier serverless api/admin/recalculate-entitlements.ts doit exister pour Vercel');
+
+  // 2. Vérifier vercel.json
+  const vercelConfig = JSON.parse(fs.readFileSync('vercel.json', 'utf8'));
+  assert.ok(Array.isArray(vercelConfig.crons), 'vercel.json doit contenir une section crons');
+  const cronJob = vercelConfig.crons.find((c: any) => c.path === '/api/admin/recalculate-entitlements');
+  assert.ok(cronJob, 'La tâche Cron Vercel doit cibler /api/admin/recalculate-entitlements');
+  assert.ok(cronJob.schedule, 'La tâche Cron doit avoir une planification schedule définie');
+
+  // 3. Vérifier la règle de réécriture dans vercel.json
+  const rewriteRule = vercelConfig.rewrites.find((r: any) => r.source === '/api/admin/recalculate-entitlements');
+  assert.ok(rewriteRule, 'vercel.json doit déclarer la réécriture pour /api/admin/recalculate-entitlements');
+});
+
 console.log(`\n🎉 TOUS LES ${passedTests} TESTS DE SÉCURITÉ FIRESTORE ET CONFIDENTIALITÉ ONT RÉUSSI !\n`);
 

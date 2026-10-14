@@ -15,9 +15,9 @@ const getDirname = () => {
 /**
  * Vérifie de façon cryptographique et sécurisée le jeton Firebase ID côté serveur
  * via l'API officielle Google Identity Toolkit.
- * @returns uid de l'utilisateur authentifié (qui ne peut pas être falsifié par le client)
+ * @returns { uid, email } de l'utilisateur authentifié
  */
-export async function verifyFirebaseIdToken(token: string): Promise<string> {
+export async function verifyFirebaseUserDetails(token: string): Promise<{ uid: string; email: string }> {
   let firebaseApiKey = '';
 
   // 1. Recherche dans firebase-applet-config.json
@@ -66,12 +66,37 @@ export async function verifyFirebaseIdToken(token: string): Promise<string> {
   }
 
   const data: any = await response.json();
-  const uid = data?.users?.[0]?.localId;
+  const user = data?.users?.[0];
+  const uid = user?.localId;
+  const email = (user?.email || '').trim().toLowerCase();
+
   if (!uid) {
     throw new Error('Utilisateur non identifié pour ce jeton.');
   }
 
-  return uid;
+  return { uid, email };
+}
+
+/**
+ * Vérifie de façon cryptographique et sécurisée le jeton Firebase ID côté serveur.
+ * @returns uid de l'utilisateur authentifié
+ */
+export async function verifyFirebaseIdToken(token: string): Promise<string> {
+  const details = await verifyFirebaseUserDetails(token);
+  return details.uid;
+}
+
+/**
+ * Vérifie de façon stricte que le jeton Firebase ID appartient EXCLUSIVEMENT
+ * à l'administrateur système autorisé (foosco80@gmail.com).
+ * Tout jeton de vendeur ou utilisateur tiers est catégoriquement rejeté.
+ */
+export async function verifyFirebaseAdminToken(token: string): Promise<{ uid: string; email: string }> {
+  const details = await verifyFirebaseUserDetails(token);
+  if (details.email !== 'foosco80@gmail.com') {
+    throw new Error('Accès interdit : ce compte utilisateur n’a pas les privilèges administrateur.');
+  }
+  return details;
 }
 
 /**
