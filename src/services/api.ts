@@ -202,6 +202,9 @@ export const ApiService = {
       const message = data?.message || data?.error || `Erreur serveur HTTP ${res.status}`;
       throw new Error(`Le recalcul serveur a échoué : ${message}`);
     }
+    if (Number(data.summary.errors || 0) > 0) {
+      throw new Error(`Recalcul incomplet : ${data.summary.errors} erreur(s) côté serveur. Consultez les journaux Vercel avant de relancer.`);
+    }
 
     return {
       total: data.summary.totalUsersScanned,
