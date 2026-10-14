@@ -128,14 +128,22 @@ export function getAdminDb(): Firestore {
       }
       // 2. Separate client email + private key
       else if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
-        initializeApp({
-          credential: cert({
+        const privateKey = normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY);
+        try {
+          initializeApp({
+            credential: cert({
+              projectId,
+              clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+              privateKey,
+            }),
             projectId,
-            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-            privateKey: normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY),
-          }),
-          projectId,
-        });
+          });
+        } catch (credentialError: any) {
+          // Safe metadata only: never include the key or email in logs/errors.
+          throw new Error(
+            `Firebase Admin refuse FIREBASE_PRIVATE_KEY (longueur=${privateKey.length}, lignes=${privateKey.split('\n').length}, BEGIN=${privateKey.includes('-----BEGIN PRIVATE KEY-----')}, END=${privateKey.includes('-----END PRIVATE KEY-----')}). Vérifiez que la valeur provient intégralement du champ private_key du JSON téléchargé.`
+          );
+        }
       }
       // 3. Google Application Default Credentials (e.g. Cloud Run / GCP runtime)
       else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
