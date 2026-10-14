@@ -106,45 +106,45 @@ export function computeVendorEntitlements(
     };
   }
 
-  // Case 5: Trial period with explicit trial expiration timestamp
-  const trialEnd = userDoc.trialEndsAt || userDoc.date_expiration_essai;
-  if (trialEnd) {
-    const trialEndMs = new Date(trialEnd).getTime();
-    if (!isNaN(trialEndMs) && trialEndMs > nowMs) {
-      return {
-        hasFullCatalog: true,
-        is_active: true,
-        reason: 'trial_active',
-      };
-    } else {
-      // Trial has expired: catalog display is limited to 4 products, store stays open
-      return {
-        hasFullCatalog: false,
-        is_active: true,
-        reason: 'trial_expired',
-      };
-    }
-  }
+  // Case 5: Trial period. The configured duration is authoritative whenever
+  // a trial start date exists; stored trialEndsAt can be stale after admin changes trialDays.
+  if (userDoc.plan !== 'Gratuit' && userDoc.status !== 'Gratuit') {
+    const trialStart = userDoc.trialStartedAt || userDoc.createdAt || userDoc.created_at;
+    const storedTrialEnd = userDoc.trialEndsAt || userDoc.date_expiration_essai;
+    const startMs = trialStart ? new Date(trialStart).getTime() : Number.NaN;
+    const storedEndMs = storedTrialEnd ? new Date(storedTrialEnd).getTime() : Number.NaN;
+    const safeTrialDays = Number.isFinite(configuredTrialDays)
+      ? Math.max(0, configuredTrialDays)
+      : 7;
+    const trialEndMs = Number.isFinite(startMs)
+      ? startMs + safeTrialDays * 86400000
+      : storedEndMs;
 
-  // Case 6: Active account without explicit Gratuit/VIP: evaluate against configured trialDays
-  if (userDoc.status === 'Actif' && userDoc.plan !== 'Gratuit') {
-    const created = userDoc.trialStartedAt || userDoc.created_at || userDoc.createdAt;
-    if (created) {
-      const ageDays = (nowMs - new Date(created).getTime()) / 86400000;
-      if (ageDays <= configuredTrialDays) {
+    if (Number.isFinite(trialEndMs)) {
+      if (trialEndMs > nowMs) {
         return {
           hasFullCatalog: true,
           is_active: true,
           reason: 'trial_active',
         };
       }
+      // Trial expired: restrict the public catalog to the free product limit,
+      // without deleting the vendor's stored products.
+      return {
+        hasFullCatalog: false,
+        is_active: true,
+        reason: 'trial_expired',
+      };
     }
-    // Expired default trial
-    return {
-      hasFullCatalog: false,
-      is_active: true,
-      reason: 'trial_expired',
-    };
+
+    // No usable trial timestamp: an active non-free account has no remaining trial.
+    if (userDoc.status === 'Actif') {
+      return {
+        hasFullCatalog: false,
+        is_active: true,
+        reason: 'trial_expired',
+      };
+    }
   }
 
   // Default fallback: restricted free mode
