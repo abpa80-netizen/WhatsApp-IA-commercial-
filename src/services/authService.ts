@@ -9,7 +9,7 @@ import {
   sendPasswordResetEmail,
   FirebaseUser 
 } from '../firebase';
-import { FirestoreService, DEFAULT_GLOBAL_SETTINGS } from './firestoreService';
+import { FirestoreService } from './firestoreService';
 import { Vendeur } from '../types';
 
 export const ADMIN_EMAIL = 'foosco80@gmail.com';
