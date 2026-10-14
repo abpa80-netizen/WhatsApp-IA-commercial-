@@ -117,10 +117,16 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
       return;
     }
 
-    const isVip = vendeur.status === 'VIP' || (vendeur as any).plan === 'VIP';
-    const isTrial = (vendeur as any).trialEndsAt 
-      ? new Date((vendeur as any).trialEndsAt).getTime() > Date.now()
-      : (vendeur.status === 'Actif' && (vendeur as any).plan !== 'Gratuit');
+    const now = Date.now();
+    const vipEndsAt = (vendeur as any).vipEndsAt;
+    const isVip = (vendeur.status === 'VIP' || (vendeur as any).plan === 'VIP') &&
+      (!vipEndsAt || new Date(vipEndsAt).getTime() > now);
+    const trialStart = (vendeur as any).trialStartedAt || (vendeur as any).createdAt || vendeur.created_at;
+    const trialStartMs = trialStart ? new Date(trialStart).getTime() : Number.NaN;
+    const isTrial = vendeur.status === 'Actif' &&
+      (vendeur as any).plan !== 'Gratuit' &&
+      Number.isFinite(trialStartMs) &&
+      trialStartMs + 3 * 86400000 > now;
     
     if (!isVip && !isTrial && products.length >= 4) {
       showToast('Plafond de 4 produits atteint en mode Gratuit. Débloquez le catalogue illimité en passant VIP !', 'info');

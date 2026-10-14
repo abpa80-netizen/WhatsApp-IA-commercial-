@@ -29,17 +29,16 @@ export const TrialBanner: React.FC<TrialBannerProps> = ({
 
   useEffect(() => {
     const calculateTime = () => {
-      // Dynamic trial calculation based on registration date and current config.trialDays / config.trial_days
-      const createdTime = vendeur?.trialStartedAt 
-        ? new Date(vendeur.trialStartedAt).getTime() 
-        : (vendeur?.created_at ? new Date(vendeur.created_at).getTime() : Date.now());
-      const effectiveTrialDays = config?.trialDays ?? config?.trial_days;
-      const serverExpiration = vendeur?.trialEndsAt 
-        ? new Date(vendeur.trialEndsAt).getTime() 
-        : (vendeur?.date_expiration_essai ? new Date(vendeur.date_expiration_essai).getTime() : 0);
-      
-      const targetExpiration = (typeof effectiveTrialDays === 'number' && effectiveTrialDays > 0)
-        ? (createdTime + effectiveTrialDays * 86400000)
+      // Fixed three-day policy. Prefer the registration timestamp so stale legacy
+      // expiration fields cannot extend a trial; fail closed if no valid dates exist.
+      const trialStart = vendeur?.trialStartedAt || vendeur?.createdAt || vendeur?.created_at;
+      const createdTime = trialStart ? new Date(trialStart).getTime() : Number.NaN;
+      const serverExpiration = vendeur?.trialEndsAt
+        ? new Date(vendeur.trialEndsAt).getTime()
+        : (vendeur?.date_expiration_essai ? new Date(vendeur.date_expiration_essai).getTime() : Number.NaN);
+
+      const targetExpiration = Number.isFinite(createdTime)
+        ? createdTime + 3 * 86400000
         : serverExpiration;
 
       const now = Date.now();

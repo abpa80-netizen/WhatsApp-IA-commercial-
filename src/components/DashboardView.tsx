@@ -101,7 +101,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const totalConversions = vendeur?.conversions || 0;
   const conversionRate = totalViews > 0 ? ((totalConversions / totalViews) * 100).toFixed(1) : '0.0';
 
-  const isRestricted = Boolean(vendeur?.status !== 'VIP' && vendeur?.date_expiration_essai && new Date(vendeur.date_expiration_essai).getTime() < Date.now());
+  const now = Date.now();
+  const vipEndsAt = (vendeur as any)?.vipEndsAt;
+  const isVipActive = (vendeur?.status === 'VIP' || (vendeur as any)?.plan === 'VIP') &&
+    (!vipEndsAt || new Date(vipEndsAt).getTime() > now);
+  const isFreeTier = vendeur?.status === 'Gratuit' || (vendeur as any)?.plan === 'Gratuit';
+  const trialStart = (vendeur as any)?.trialStartedAt || (vendeur as any)?.createdAt || vendeur?.created_at;
+  const trialStartMs = trialStart ? new Date(trialStart).getTime() : Number.NaN;
+  const legacyTrialEnd = vendeur?.trialEndsAt || vendeur?.date_expiration_essai;
+  const legacyTrialEndMs = legacyTrialEnd ? new Date(legacyTrialEnd).getTime() : Number.NaN;
+  const trialEndMs = Number.isFinite(trialStartMs) ? trialStartMs + 3 * 86400000 : legacyTrialEndMs;
+  const isRestricted = !isVipActive && (isFreeTier || !Number.isFinite(trialEndMs) || trialEndMs <= now);
 
   return (
     <div id="dashboard-view" className="space-y-6">

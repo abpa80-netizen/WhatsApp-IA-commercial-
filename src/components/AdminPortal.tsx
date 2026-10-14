@@ -538,7 +538,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       await fetchAdminData(true);
       if (entitlementRefreshError) {
         setDiagnosticError(`Configuration enregistrée, mais les droits du catalogue n’ont pas pu être recalculés automatiquement : ${entitlementRefreshError}`);
-        showToast('Configuration enregistrée, mais le recalcul des expirations a échoué. Utilisez « Recalculer expirations ».', 'error');
+        showToast(`Configuration enregistrée, mais le recalcul a échoué : ${entitlementRefreshError}`, 'error');
       } else {
         showToast('Configuration globale enregistrée ; les expirations et droits des essais ont été recalculés.', 'success');
       }
@@ -636,8 +636,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         'success'
       );
       await fetchAdminData(false);
-    } catch {
-      showToast('Erreur lors du recalcul des droits d’expiration', 'error');
+    } catch (err: any) {
+      const message = err?.message || 'Erreur lors du recalcul des droits d’expiration.';
+      // The server returns only safe diagnostics; never log or display credential contents.
+      console.error('[AdminPortal] Recalcul des droits échoué:', message);
+      setDiagnosticError(message);
+      showToast(message, 'error');
     } finally {
       setRecalculating(false);
     }
