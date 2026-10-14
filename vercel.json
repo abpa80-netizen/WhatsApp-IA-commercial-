@@ -55,7 +55,7 @@
   "crons": [
     {
       "path": "/api/admin/recalculate-entitlements",
-      "schedule": "0 * * * *"
+      "schedule": "0 0 * * *"
     }
   ],
   "rewrites": [
