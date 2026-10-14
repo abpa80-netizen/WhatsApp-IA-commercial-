@@ -62,6 +62,21 @@ export function isFirebaseAdminConfigured(): boolean {
   );
 }
 
+function normalizePrivateKey(raw: string): string {
+  // Vercel may store PEM values with literal escaped line breaks or wrapping quotes.
+  let key = raw.trim();
+  if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+    key = key.slice(1, -1).trim();
+  }
+  key = key
+    .replace(/\\\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim();
+  return key;
+}
+
 export function getAdminDb(): Firestore {
   if (adminDbInstance) {
     return adminDbInstance;
@@ -108,7 +123,7 @@ export function getAdminDb(): Firestore {
           credential: cert({
             projectId,
             clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-            privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+            privateKey: normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY),
           }),
           projectId,
         });
