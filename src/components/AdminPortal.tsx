@@ -529,9 +529,25 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           setWhatsappSupport(updated.supportWhatsapp || updated.whatsapp_support || whatsappSupport);
         }
       }
-      showToast('Configuration globale enregistrée dans Firestore avec succès !', 'success');
       setDiagnosticError(null);
+
+      // Recalculate server-side catalog rights immediately after trial duration changes.
+      // The server uses the same trial-start + configured-duration rule as this dashboard.
+      let entitlementRefreshError: string | null = null;
+      try {
+        await ApiService.recalculateEntitlements();
+      } catch (recalcErr: any) {
+        entitlementRefreshError = recalcErr?.message || 'Recalcul des droits impossible.';
+        console.error('[AdminPortal] Configuration sauvegardée, mais recalcul des droits échoué:', recalcErr);
+      }
+
       await fetchAdminData(true);
+      if (entitlementRefreshError) {
+        setDiagnosticError(`Configuration enregistrée, mais les droits du catalogue n’ont pas pu être recalculés automatiquement : ${entitlementRefreshError}`);
+        showToast('Configuration enregistrée, mais le recalcul des expirations a échoué. Utilisez « Recalculer expirations ».', 'error');
+      } else {
+        showToast('Configuration globale enregistrée ; les expirations et droits des essais ont été recalculés.', 'success');
+      }
     } catch (err: any) {
       console.error('[AdminPortal] Erreur lors de la sauvegarde de la configuration:', err);
       let errorMsg = 'Erreur lors de la mise à jour de la configuration';
@@ -1143,11 +1159,21 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 <tbody className="divide-y divide-slate-800 bg-slate-900/40">
                   {trialVendors.map((v) => {
                     if (!v) return null;
-                    const trialDays = Number(config?.trialDays ?? config?.trial_days) || 7;
-                    const createdTime = v.trialStartedAt ? new Date(v.trialStartedAt).getTime() : (v.created_at ? new Date(v.created_at).getTime() : Date.now());
-                    const targetExpiration = v.trialEndsAt ? new Date(v.trialEndsAt).getTime() : (createdTime + trialDays * 86400000);
-                    const diffDays = Math.ceil((targetExpiration - Date.now()) / (1000 * 60 * 60 * 24));
-                    const isExpired = diffDays <= 0;
+                    // Use the configured trial duration from the actual trial start.
+                    // A persisted trialEndsAt may be stale after the administrator changes trialDays.
+                    const configuredTrialDays = Math.max(0, Number(config?.trialDays ?? config?.trial_days ?? 7));
+                    const trialStartValue = v.trialStartedAt || v.createdAt || v.created_at;
+                    const trialStartMs = trialStartValue ? new Date(trialStartValue).getTime() : Number.NaN;
+                    const storedExpirationValue = v.trialEndsAt || v.date_expiration_essai;
+                    const storedExpirationMs = storedExpirationValue ? new Date(storedExpirationValue).getTime() : Number.NaN;
+                    const targetExpiration = Number.isFinite(trialStartMs)
+                      ? trialStartMs + configuredTrialDays * 86400000
+                      : Number.isFinite(storedExpirationMs)
+                        ? storedExpirationMs
+                        : Date.now();
+                    const diffDays = Math.ceil((targetExpiration - Date.now()) / 86400000);
+                    const isExpired = targetExpiration <= Date.now();
+                    const trialStartDate = Number.isFinite(trialStartMs) ? new Date(trialStartMs) : null;
                     const phoneClean = String(v.phone || v.id || '').replace(/\D/g, '');
                     const dateFormatted = v.created_at ? new Date(v.created_at).toLocaleDateString('fr-FR') : 'Récent';
 
@@ -1201,9 +1227,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                               ⏳ {diffDays} jour{diffDays > 1 ? 's' : ''} restant{diffDays > 1 ? 's' : ''}
                             </span>
                           )}
-                          {v.trialStartedAt && (
+                          {trialStartDate && (
                             <div className="text-[10px] text-slate-400 mt-1 font-mono">
-                              Du {new Date(v.trialStartedAt).toLocaleDateString('fr-FR')} au {new Date(targetExpiration).toLocaleDateString('fr-FR')}
+                              Du {trialStartDate.toLocaleDateString('fr-FR')} au {new Date(targetExpiration).toLocaleDateString('fr-FR')}
                             </div>
                           )}
                         </td>
