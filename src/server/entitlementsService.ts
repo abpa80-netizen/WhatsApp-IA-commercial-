@@ -16,6 +16,7 @@
  */
 
 import { getAdminDb, isFirebaseAdminConfigured } from './firebaseAdmin.ts';
+import { FieldValue } from 'firebase-admin/firestore';
 import { verifyFirebaseAdminToken } from './cloudinarySign.ts';
 
 export interface EntitlementResult {
@@ -218,13 +219,21 @@ export async function recalculateAllEntitlementsServer(): Promise<RecalculationS
         const currentHasFull = currentData?.hasFullCatalog;
         const currentIsActive = currentData?.is_active;
 
-        if (!storeSnap.exists || currentHasFull !== entitlement.hasFullCatalog || currentIsActive !== entitlement.is_active) {
+        const sensitivePublicFields = ['role', 'status', 'plan', 'trialStartedAt', 'trialEndsAt', 'date_expiration_essai', 'vipStartedAt', 'vipEndsAt', 'whatsappNumber', 'phone', 'phoneNormalized'];
+        const hasSensitivePublicFields = Boolean(currentData && sensitivePublicFields.some((key) => key in currentData));
+
+        if (!storeSnap.exists || currentHasFull !== entitlement.hasFullCatalog || currentIsActive !== entitlement.is_active || hasSensitivePublicFields) {
+          const purgePrivateFields: Record<string, any> = {};
+          for (const key of ['role', 'status', 'plan', 'trialStartedAt', 'trialEndsAt', 'date_expiration_essai', 'vipStartedAt', 'vipEndsAt', 'whatsappNumber', 'phone', 'phoneNormalized']) {
+            purgePrivateFields[key] = FieldValue.delete();
+          }
           await storeRef.set(
             {
               id: uid,
               hasFullCatalog: entitlement.hasFullCatalog,
               is_active: entitlement.is_active,
               updatedAt: new Date().toISOString(),
+              ...purgePrivateFields,
             },
             { merge: true }
           );
@@ -246,11 +255,16 @@ export async function recalculateAllEntitlementsServer(): Promise<RecalculationS
         if (!validUserIds.has(storeUid)) {
           const storeData = storeDoc.data();
           if (storeData.is_active !== false || storeData.hasFullCatalog !== false) {
+            const purgePrivateFields: Record<string, any> = {};
+            for (const key of ['role', 'status', 'plan', 'trialStartedAt', 'trialEndsAt', 'date_expiration_essai', 'vipStartedAt', 'vipEndsAt', 'whatsappNumber', 'phone', 'phoneNormalized']) {
+              purgePrivateFields[key] = FieldValue.delete();
+            }
             await adminDb.collection('publicStores').doc(storeUid).set(
               {
                 hasFullCatalog: false,
                 is_active: false,
                 updatedAt: new Date().toISOString(),
+                ...purgePrivateFields,
               },
               { merge: true }
             );
