@@ -80,7 +80,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   // Config editing state with safe defaults
   const [priceVip, setPriceVip] = useState(config?.vipPrice ?? config?.price_vip ?? 199);
   const [priceVipCfa, setPriceVipCfa] = useState(config?.vipPriceCfa ?? config?.price_vip_cfa ?? 12000);
-  const [trialDays, setTrialDays] = useState(3);
+  const trialDays = 3;
   const [whatsappSupport, setWhatsappSupport] = useState(config?.supportWhatsapp || config?.whatsapp_support || '+212600000000');
   const [savingConfig, setSavingConfig] = useState(false);
   // These hooks must remain above every conditional return to preserve React hook order.
