@@ -41,7 +41,7 @@ export interface RecalculationSummary {
  * Authoritative evaluation of vendor subscription entitlements based strictly
  * on private user document data (/users/{uid}).
  * 
- * Respects dynamic trialDays parameter configured in settings/global.
+ * Uses a fixed three-day trial policy in production; the helper accepts explicit durations for tests.
  * Never trusts client or publicStore flags.
  */
 export function computeVendorEntitlements(
@@ -106,7 +106,7 @@ export function computeVendorEntitlements(
     };
   }
 
-  // Case 5: Trial period. The configured duration is authoritative whenever
+  // Case 5: Trial period. The fixed three-day duration is authoritative whenever
   // a trial start date exists; stored trialEndsAt can be stale after admin changes trialDays.
   if (userDoc.plan !== 'Gratuit' && userDoc.status !== 'Gratuit') {
     const trialStart = userDoc.trialStartedAt || userDoc.createdAt || userDoc.created_at;
