@@ -6,7 +6,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import fs from 'fs';
-import { handleCloudinarySign, verifyFirebaseIdToken, generateCloudinarySignature } from './src/server/cloudinarySign.ts';
+import { handleCloudinarySign, verifyFirebaseIdToken, verifyFirebaseUserDetails, generateCloudinarySignature } from './src/server/cloudinarySign.ts';
+import { getAdminDb } from './src/server/firebaseAdmin.ts';
 
 export { verifyFirebaseIdToken, generateCloudinarySignature, handleCloudinarySign };
 
@@ -23,6 +24,56 @@ app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
 // Note: Old JSON file-based database endpoints (/api/auth/access, /api/admin/*, /api/vendors/*, /api/system/config)
 // have been removed to prepare for Firebase Auth & Firestore integration.
+
+// Premium API guard: client-side locks are UX only; enforce entitlements on every AI endpoint.
+async function requirePremiumSeller(req: Request, res: Response): Promise<boolean> {
+  const authorization = String(req.headers.authorization || '');
+  const tokenMatch = authorization.match(/^Bearer\s+(.+)$/i);
+  if (!tokenMatch) {
+    res.status(401).json({ error: 'Connexion requise pour utiliser les outils IA.' });
+    return false;
+  }
+
+  try {
+    const identity = await verifyFirebaseUserDetails(tokenMatch[1]);
+    if (identity.email === 'foosco80@gmail.com') return true;
+
+    const snapshot = await getAdminDb().collection('users').doc(identity.uid).get();
+    if (!snapshot.exists) {
+      res.status(403).json({ error: 'Profil vendeur introuvable. Reconnectez-vous.' });
+      return false;
+    }
+
+    const seller: any = snapshot.data() || {};
+    const now = Date.now();
+    const vipEnd = seller.vipEndsAt ? new Date(seller.vipEndsAt).getTime() : Number.NaN;
+    const vipExpired = Number.isFinite(vipEnd) && vipEnd <= now;
+    const vipActive = (seller.status === 'VIP' || seller.plan === 'VIP') && !vipExpired;
+    if (vipActive) return true;
+
+    // An expired VIP must downgrade to Free, never fall back to a trial.
+    if (seller.status === 'VIP' || seller.plan === 'VIP' ||
+        seller.status === 'Gratuit' || seller.plan === 'Gratuit' ||
+        seller.status === 'Inactif' || seller.status === 'Suspendu' || seller.is_active === false) {
+      res.status(403).json({ error: 'Accès premium verrouillé. Passez au Pack VIP pour réactiver les outils IA.' });
+      return false;
+    }
+
+    const trialStartValue = seller.trialStartedAt || seller.createdAt || seller.created_at;
+    const trialStart = trialStartValue ? new Date(trialStartValue).getTime() : Number.NaN;
+    const storedEndValue = seller.trialEndsAt || seller.date_expiration_essai;
+    const storedEnd = storedEndValue ? new Date(storedEndValue).getTime() : Number.NaN;
+    const trialEnd = Number.isFinite(trialStart) ? trialStart + 3 * 24 * 60 * 60 * 1000 : storedEnd;
+    if (Number.isFinite(trialEnd) && trialEnd > now) return true;
+
+    res.status(403).json({ error: 'Votre essai gratuit est terminé. En mode gratuit, les outils IA sont verrouillés. Passez au Pack VIP pour continuer.' });
+    return false;
+  } catch (error: any) {
+    console.warn('[AI access] Authentication/entitlement check failed:', error?.message || 'unknown error');
+    res.status(401).json({ error: 'Impossible de vérifier vos droits. Reconnectez-vous puis réessayez.' });
+    return false;
+  }
+}
 
 const apiKey = process.env.GEMINI_API_KEY || '';
 const ai = new GoogleGenAI({
@@ -68,6 +119,7 @@ async function generateTextWithFallback(params: {
 // 1. PRODUCT DESCRIPTION GENERATOR ("Magie IA 🪄")
 app.post('/api/ai/describe', async (req: Request, res: Response) => {
   try {
+    if (!(await requirePremiumSeller(req, res))) return;
     const { name, price, currency = 'MAD', category = '', location = '', language = 'fr' } = req.body;
 
     if (!name || typeof name !== 'string') {
@@ -111,6 +163,7 @@ ${location ? `- Emplacement : ${location}` : ''}
 // 2. ASSISTANT COMMERCIAL & COACH DE VENTE IA (CHATBOT GEMINI)
 app.post('/api/ai/chat', async (req: Request, res: Response) => {
   try {
+    if (!(await requirePremiumSeller(req, res))) return;
     const { message, history = [], vendorContext, systemInstruction: customInstruction } = req.body;
 
     if (!message || typeof message !== 'string') {
@@ -175,6 +228,7 @@ ${vendorInfo}`;
 // 3. GENERATION DE BANNIERE / PHOTO PROMO (gemini-3.1-flash-image)
 app.post('/api/ai/image/generate', async (req: Request, res: Response) => {
   try {
+    if (!(await requirePremiumSeller(req, res))) return;
     const { prompt, aspectRatio = '1:1' } = req.body;
 
     if (!prompt || typeof prompt !== 'string') {
@@ -230,6 +284,7 @@ app.post('/api/ai/image/generate', async (req: Request, res: Response) => {
 // 4. SUBLIMER LA PHOTO EXISTANTE (gemini-3.1-flash-image)
 app.post('/api/ai/image/enhance', async (req: Request, res: Response) => {
   try {
+    if (!(await requirePremiumSeller(req, res))) return;
     const { imageBase64, action = 'enhance' } = req.body;
 
     if (!imageBase64 || typeof imageBase64 !== 'string') {
