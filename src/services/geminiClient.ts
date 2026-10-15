@@ -74,7 +74,7 @@ export const GeminiClient = {
       const idToken = await auth.currentUser?.getIdToken();
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
         body: JSON.stringify(params),
       });
 
@@ -98,7 +98,7 @@ export const GeminiClient = {
     const idToken = await auth.currentUser?.getIdToken();
     const res = await fetch('/api/ai/image/generate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
       body: JSON.stringify({ prompt, aspectRatio }),
     });
 
@@ -121,7 +121,7 @@ export const GeminiClient = {
     const idToken = await auth.currentUser?.getIdToken();
     const res = await fetch('/api/ai/image/enhance', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
       body: JSON.stringify({ imageBase64, action }),
     });
 
