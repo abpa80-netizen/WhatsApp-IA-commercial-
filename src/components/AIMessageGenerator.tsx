@@ -165,10 +165,37 @@ Que souhaitez-vous préparer aujourd'hui ? Choisissez une suggestion ci-dessous 
       setMessages((prev) => [...prev, aiMessage]);
     } catch (err: any) {
       console.error('Chat error:', err);
+
+      const status = Number(err?.status || 0);
+      const code = String(err?.code || '');
+      const rawMsg = String(err?.message || '');
+
+      let userFacingError = 'Une erreur temporaire est survenue lors de la communication avec l’IA.';
+
+      if (status === 404 || code === 'NOT_FOUND' || rawMsg.includes('404')) {
+        userFacingError = 'Le service ou le point d’accès du Coach IA est temporairement introuvable (Erreur 404). Le routage ou le modèle demandé a été actualisé.';
+      } else if (status === 401 || status === 403 || code === 'AUTH_ERROR' || rawMsg.includes('401') || rawMsg.includes('403')) {
+        userFacingError = 'Erreur d’authentification du service IA (Clé d’accès manquante ou non autorisée). Veuillez contacter l’administrateur.';
+      } else if (
+        status === 503 ||
+        status === 429 ||
+        code === 'SERVICE_UNAVAILABLE' ||
+        code === 'RATE_LIMIT' ||
+        rawMsg.includes('503') ||
+        rawMsg.includes('429') ||
+        rawMsg.toLowerCase().includes('demand') ||
+        rawMsg.toLowerCase().includes('surchargé') ||
+        rawMsg.toLowerCase().includes('quota')
+      ) {
+        userFacingError = 'Le service Gemini est momentanément surchargé ou le quota temporaire est atteint (Erreur 503 / 429). Veuillez patienter quelques secondes et relancer.';
+      } else if (rawMsg && !rawMsg.includes('[object Object]')) {
+        userFacingError = rawMsg;
+      }
+
       const errorMessage: ChatMessage = {
         id: `err-${Date.now()}`,
         role: 'model',
-        text: `⚠️ Désolé, une petite erreur est survenue lors de la communication avec Gemini (${err.message || 'Réseau'}). Veuillez réessayer dans un instant.`,
+        text: `⚠️ Désolé, ${userFacingError} Veuillez réessayer dans un instant.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, errorMessage]);

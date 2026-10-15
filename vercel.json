@@ -68,6 +68,22 @@
       "destination": "/api/admin/recalculate-entitlements"
     },
     {
+      "source": "/api/ai/chat",
+      "destination": "/api/ai/chat"
+    },
+    {
+      "source": "/api/ai/describe",
+      "destination": "/api/ai/describe"
+    },
+    {
+      "source": "/api/ai/image/generate",
+      "destination": "/api/ai/image/generate"
+    },
+    {
+      "source": "/api/ai/image/enhance",
+      "destination": "/api/ai/image/enhance"
+    },
+    {
       "source": "/((?!api/|sw\\.js|manifest\\.json|manifest\\.webmanifest|.*\\.(?:png|jpg|jpeg|gif|svg|ico|json|js|css|webp|woff2?)).*)",
       "destination": "/index.html"
     }

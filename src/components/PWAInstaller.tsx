@@ -20,7 +20,7 @@ let capturedInstallPrompt: BeforeInstallPromptEvent | null =
 const promptListeners = new Set<(prompt: BeforeInstallPromptEvent | null) => void>();
 
 const isAiStudioPreview =
-  import.meta.env.DEV ||
+  Boolean((import.meta as any).env?.DEV) ||
   (typeof window !== 'undefined' && (
     window.location.hostname.includes('run.app') ||
     window.location.hostname === 'localhost' ||

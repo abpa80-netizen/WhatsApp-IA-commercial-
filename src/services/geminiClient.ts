@@ -80,7 +80,10 @@ export const GeminiClient = {
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Erreur (${res.status})`);
+        const err: any = new Error(errData.error || `Erreur (${res.status})`);
+        err.status = res.status;
+        err.code = errData.code;
+        throw err;
       }
 
       const data = await res.json();

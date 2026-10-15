@@ -767,6 +767,7 @@ runTest('22. Expiration essai : Passage explicite d’essai valide à expiré et
   // État 2 : Essai expiré (date dans le passé)
   const expiredTrialUser = {
     ...validTrialUser,
+    trialStartedAt: new Date(Date.now() - 5 * 86400000).toISOString(),
     trialEndsAt: new Date(Date.now() - 1 * 86400000).toISOString(),
     date_expiration_essai: new Date(Date.now() - 1 * 86400000).toISOString(),
   };
