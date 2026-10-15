@@ -38,6 +38,22 @@ export const DEFAULT_GLOBAL_SETTINGS: SystemConfig = {
   supportWhatsapp: '+212600000000',
 };
 
+// Firestore may contain ISO strings, Date objects, or Timestamp objects.
+function normalizeStoredDate(value: any): string | undefined {
+  if (value === null || value === undefined || value === '') return undefined;
+  try {
+    let date: Date;
+    if (value instanceof Date) date = value;
+    else if (typeof value === 'object' && typeof value.toDate === 'function') date = value.toDate();
+    else if (typeof value === 'object' && typeof value.seconds === 'number') date = new Date(value.seconds * 1000);
+    else if (typeof value === 'object' && typeof value._seconds === 'number') date = new Date(value._seconds * 1000);
+    else date = new Date(value);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export const FirestoreService = {
   // ----------------------------------------------------
   // 1. SETTINGS / GLOBAL
@@ -131,6 +147,13 @@ export const FirestoreService = {
       }
       const d = snap.data();
       const phone = d.whatsappNumber || d.phone || '';
+      // Never manufacture a fresh registration/expiry date while reading an old profile:
+      // that would silently restart the free trial on every login.
+      const createdAt = normalizeStoredDate(d.createdAt) || normalizeStoredDate(d.created_at);
+      const trialStartedAt = normalizeStoredDate(d.trialStartedAt) || createdAt;
+      const trialEndsAt = normalizeStoredDate(d.trialEndsAt) || normalizeStoredDate(d.date_expiration_essai);
+      const vipStartedAt = normalizeStoredDate(d.vipStartedAt);
+      const vipEndsAt = normalizeStoredDate(d.vipEndsAt);
       return {
         id: uid,
         uid: uid,
@@ -146,17 +169,17 @@ export const FirestoreService = {
         role: d.role || 'seller',
         is_active: d.status !== 'Inactif' && d.status !== 'Suspendu',
         plan: d.plan || 'Essai',
-        trialStartedAt: d.trialStartedAt || d.createdAt,
-        trialEndsAt: d.trialEndsAt || d.date_expiration_essai,
-        vipStartedAt: d.vipStartedAt,
-        vipEndsAt: d.vipEndsAt,
+        trialStartedAt,
+        trialEndsAt,
+        vipStartedAt,
+        vipEndsAt,
         publicSlug: d.publicSlug || uid,
-        date_expiration_essai: d.trialEndsAt || d.date_expiration_essai || new Date(Date.now() + 3 * 86400000).toISOString(),
+        date_expiration_essai: trialEndsAt || '',
         useLoginNumberAsPublic: Boolean(d.useLoginNumberAsPublic),
         commercialWhatsApp: d.commercialWhatsApp || '',
         allowCommercialContact: Boolean(d.allowCommercialContact || d.useLoginNumberAsPublic),
-        created_at: d.createdAt || d.created_at || new Date().toISOString(),
-        createdAt: d.createdAt || new Date().toISOString(),
+        created_at: createdAt || '',
+        createdAt: createdAt,
         updatedAt: d.updatedAt,
       };
     } catch (err) {
