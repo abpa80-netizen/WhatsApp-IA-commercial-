@@ -33,7 +33,7 @@ export function getVendorEntitlements(vendeur: Partial<Vendeur> | null | undefin
   const trialEnd = Number.isFinite(trialStart)
     ? trialStart + TRIAL_DURATION_MS
     : explicitTrialEnd;
-  const statusAllowsTrial = vendeur.status !== 'Gratuit' && vendeur.status !== 'Inactif' && vendeur.status !== 'Suspendu' && vendeur.plan !== 'Gratuit';
+  const statusAllowsTrial = vendeur.status !== 'VIP' && vendeur.status !== 'Gratuit' && vendeur.status !== 'Inactif' && vendeur.status !== 'Suspendu' && vendeur.plan !== 'VIP' && vendeur.plan !== 'Gratuit';
   const isTrialActive = statusAllowsTrial && Number.isFinite(trialEnd) && trialEnd > now;
   const isFreeMode = !isTrialActive;
 
