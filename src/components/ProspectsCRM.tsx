@@ -32,6 +32,7 @@ import {
   CartesianGrid 
 } from 'recharts';
 import { useToast } from './Toast';
+import { getVendorEntitlements } from '../services/entitlements';
 
 interface ProspectsCRMProps {
   vendeur: Vendeur;
@@ -221,7 +222,7 @@ export const ProspectsCRM: React.FC<ProspectsCRMProps> = ({
     return () => window.removeEventListener('popstate', handlePopState);
   }, [modalOpen]);
 
-  const isRestricted = vendeur.status !== 'VIP' && new Date(vendeur.date_expiration_essai).getTime() < Date.now();
+  const isRestricted = !getVendorEntitlements(vendeur).hasPremiumAccess;
 
   const handleOpenAdd = () => {
     setEditingProspect(null);
@@ -305,10 +306,10 @@ export const ProspectsCRM: React.FC<ProspectsCRMProps> = ({
           <Lock className="w-8 h-8" />
         </div>
         <h2 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-          Mini-CRM Prospects Réservé au Pack VIP
+          Mini-CRM Prospects réservé à l’essai et au Pack VIP
         </h2>
         <p className={`text-xs sm:text-sm leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-          Centralisez vos contacts chauds, suivez vos commandes en cours et relancez vos clients directement sur WhatsApp avec des messages sur-mesure.
+          Votre période d’essai est terminée. En mode gratuit, le CRM est verrouillé. Passez au Pack VIP pour retrouver vos contacts, le suivi client et les relances WhatsApp.
         </p>
         <button
           onClick={onOpenUpgradeModal}
