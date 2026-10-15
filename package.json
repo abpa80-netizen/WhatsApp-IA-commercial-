@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "NODE_ENV=test tsx scripts/test-vendor-isolation.ts && NODE_ENV=test tsx scripts/test-cloudinary-sign.ts && NODE_ENV=test tsx scripts/test-client-compression-upload.ts && NODE_ENV=test tsx scripts/test-vercel-cloudinary-route.ts && NODE_ENV=test tsx scripts/test-admin-firestore.ts && NODE_ENV=test tsx scripts/test-firestore-public-store-security.ts && NODE_ENV=test tsx scripts/test-pwa-selective.ts && NODE_ENV=test tsx scripts/test-trial-expiration.ts"
+    "test": "NODE_ENV=test tsx scripts/test-vendor-isolation.ts && NODE_ENV=test tsx scripts/test-cloudinary-sign.ts && NODE_ENV=test tsx scripts/test-client-compression-upload.ts && NODE_ENV=test tsx scripts/test-vercel-cloudinary-route.ts && NODE_ENV=test tsx scripts/test-admin-firestore.ts && NODE_ENV=test tsx scripts/test-firestore-public-store-security.ts && NODE_ENV=test tsx scripts/test-pwa-selective.ts && NODE_ENV=test tsx scripts/test-trial-expiration.ts && NODE_ENV=test tsx scripts/test-entitlements.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

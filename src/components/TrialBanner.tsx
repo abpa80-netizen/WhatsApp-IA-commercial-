@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Vendeur, SystemConfig } from '../types';
 import { Crown, Clock, AlertTriangle, Sparkles, ChevronRight, Hourglass } from 'lucide-react';
+import { getVendorEntitlements } from '../services/entitlements';
 
 interface TrialBannerProps {
   vendeur: Vendeur;
@@ -63,7 +64,9 @@ export const TrialBanner: React.FC<TrialBannerProps> = ({
 
   if (!vendeur) return null;
 
-  if (vendeur.status === 'VIP') {
+  const entitlements = getVendorEntitlements(vendeur);
+
+  if (entitlements.isVipActive) {
     return (
       <div 
         id="vip-active-banner"
@@ -84,7 +87,7 @@ export const TrialBanner: React.FC<TrialBannerProps> = ({
     );
   }
 
-  const isExpired = timeLeft.isExpired || vendeur.status === 'Inactif';
+  const isExpired = !entitlements.isTrialActive;
   const effectiveDays = config?.trialDays ?? config?.trial_days;
   const trialDaysLabel = typeof effectiveDays === 'number' && effectiveDays > 0 ? `${effectiveDays} jours` : 'Période d’essai';
   const countdownTitle = typeof effectiveDays === 'number' && effectiveDays > 0 
@@ -111,7 +114,7 @@ export const TrialBanner: React.FC<TrialBannerProps> = ({
           <div className="flex items-center gap-2 flex-wrap">
             {isExpired ? (
               <span>
-                <strong>{trialDaysLabel} terminée :</strong> Passez en VIP pour réactiver votre catalogue illimité et l’IA.
+                <strong>{trialDaysLabel} terminée :</strong> Le mode gratuit est activé : 4 produits publics maximum, IA, CRM et analyses verrouillés. Passez VIP pour tout débloquer.
               </span>
             ) : (
               <div className="flex items-center gap-2 flex-wrap">
@@ -122,7 +125,7 @@ export const TrialBanner: React.FC<TrialBannerProps> = ({
                   {timeLeft.days}j {String(timeLeft.hours).padStart(2, '0')}h {String(timeLeft.minutes).padStart(2, '0')}m {String(timeLeft.seconds).padStart(2, '0')}s
                 </span>
                 <span className="hidden md:inline text-xs text-emerald-700">
-                  restantes pour tester toutes les fonctionnalités VIP.
+                  restantes pour tester l’IA, le CRM, les analyses et le catalogue complet.
                 </span>
               </div>
             )}
@@ -139,7 +142,7 @@ export const TrialBanner: React.FC<TrialBannerProps> = ({
           }`}
         >
           <Crown className="w-3.5 h-3.5" />
-          <span>Passer au Pack VIP</span>
+          <span>Débloquer le Pack VIP</span>
           <ChevronRight className="w-3 h-3" />
         </button>
       </div>

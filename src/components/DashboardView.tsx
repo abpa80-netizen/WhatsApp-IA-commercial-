@@ -26,6 +26,7 @@ import {
 import { formatCurrency } from '../services/aiGenerator';
 import { useToast } from './Toast';
 import { StoreVisitsChart } from './StoreVisitsChart';
+import { getVendorEntitlements } from '../services/entitlements';
 
 interface DashboardViewProps {
   vendeur: Vendeur;
@@ -101,17 +102,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const totalConversions = vendeur?.conversions || 0;
   const conversionRate = totalViews > 0 ? ((totalConversions / totalViews) * 100).toFixed(1) : '0.0';
 
-  const now = Date.now();
-  const vipEndsAt = (vendeur as any)?.vipEndsAt;
-  const isVipActive = (vendeur?.status === 'VIP' || (vendeur as any)?.plan === 'VIP') &&
-    (!vipEndsAt || new Date(vipEndsAt).getTime() > now);
-  const isFreeTier = vendeur?.status === 'Gratuit' || (vendeur as any)?.plan === 'Gratuit';
-  const trialStart = (vendeur as any)?.trialStartedAt || (vendeur as any)?.createdAt || vendeur?.created_at;
-  const trialStartMs = trialStart ? new Date(trialStart).getTime() : Number.NaN;
-  const legacyTrialEnd = vendeur?.trialEndsAt || vendeur?.date_expiration_essai;
-  const legacyTrialEndMs = legacyTrialEnd ? new Date(legacyTrialEnd).getTime() : Number.NaN;
-  const trialEndMs = Number.isFinite(trialStartMs) ? trialStartMs + 3 * 86400000 : legacyTrialEndMs;
-  const isRestricted = !isVipActive && (isFreeTier || !Number.isFinite(trialEndMs) || trialEndMs <= now);
+  const entitlements = getVendorEntitlements(vendeur);
+  const isRestricted = !entitlements.hasPremiumAccess;
 
   return (
     <div id="dashboard-view" className="space-y-6">
@@ -244,6 +236,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
+      {/* Premium analytics: available during trial and while VIP is active */}
+      {entitlements.hasPremiumAccess ? (
+        <>
       {/* Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Card 1: Views */}
@@ -311,6 +306,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Data Visualization: Store Daily Visits Evolution (Recharts) */}
       <StoreVisitsChart vendeur={vendeur} onOpenStore={onOpenStore} />
+        </>
+      ) : (
+        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-amber-200 shadow-sm text-center space-y-3">
+          <div className="w-12 h-12 mx-auto rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center"><Crown className="w-6 h-6" /></div>
+          <h3 className="text-lg font-bold text-slate-900">Analyses détaillées réservées à l’essai et au Pack VIP</h3>
+          <p className="max-w-xl mx-auto text-sm text-slate-600">En mode gratuit, les statistiques détaillées sont verrouillées. Passez au Pack VIP pour retrouver vos vues, clics, conversions et indicateurs de vente.</p>
+          <button onClick={onOpenUpgradeModal} className="inline-flex items-center gap-2 bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-bold px-5 py-2.5 rounded-xl"><Crown className="w-4 h-4" /> Débloquer les analyses</button>
+        </div>
+      )}
 
       {/* Quick Launch Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -29,6 +29,7 @@ import {
 import { generateCommercialScript, formatCurrency } from '../services/aiGenerator';
 import { GeminiClient, ChatMessage } from '../services/geminiClient';
 import { useToast } from './Toast';
+import { getVendorEntitlements } from '../services/entitlements';
 
 interface AIMessageGeneratorProps {
   vendeur: Vendeur;
@@ -71,7 +72,7 @@ export const AIMessageGenerator: React.FC<AIMessageGeneratorProps> = ({
   products,
   prospects = [],
   initialProspectId,
-  onOpenUpgradeModal: _onOpenUpgradeModal,
+  onOpenUpgradeModal,
 }) => {
   const { showToast } = useToast();
 
@@ -322,6 +323,20 @@ Inclus des emojis percutants et un appel à l'action clair.`;
       setIsGeneratingScript(false);
     }
   };
+
+  if (!getVendorEntitlements(vendeur).hasPremiumAccess) {
+    return (
+      <div id="ai-premium-locked" className="max-w-2xl mx-auto my-10 bg-white rounded-3xl border border-amber-200 shadow-sm p-8 text-center space-y-4">
+        <div className="w-16 h-16 mx-auto rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center"><ShieldAlert className="w-8 h-8" /></div>
+        <h2 className="text-xl font-bold text-slate-900">Assistant IA réservé à l’essai et au Pack VIP</h2>
+        <p className="text-sm text-slate-600">Votre période d’essai est terminée. En mode gratuit, le catalogue public reste limité à 4 produits et l’accès à l’IA, au CRM et aux analyses est désactivé.</p>
+        <div className="flex flex-col sm:flex-row justify-center gap-3 pt-2">
+          <button onClick={onOpenUpgradeModal} className="inline-flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-bold px-6 py-3 rounded-xl"><Crown className="w-4 h-4" /> Débloquer le Pack VIP</button>
+          <a href={`https://wa.me/?text=${encodeURIComponent('Je souhaite en savoir plus sur le Pack VIP de WhatsApp Commercial AI.')}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold px-6 py-3 rounded-xl"><MessageCircle className="w-4 h-4" /> Poser une question</a>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div id="ai-generator" className="space-y-6">

@@ -26,6 +26,7 @@ import { formatCurrency } from '../services/aiGenerator';
 import { useToast } from './Toast';
 import { uploadImageToStorage, ACCEPTED_IMAGE_TYPES } from '../services/imageUpload';
 import { GeminiClient } from '../services/geminiClient';
+import { getVendorEntitlements } from '../services/entitlements';
 
 interface CatalogManagerProps {
   vendeur: Vendeur;
@@ -212,6 +213,7 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
 
   // 1. "Magie IA 🪄" : AI Product Description Generator
   const handleGenerateAIDescription = async () => {
+    if (!getVendorEntitlements(vendeur).hasPremiumAccess) { showToast('La rédaction IA est réservée à l’essai et au Pack VIP.', 'info'); _onOpenUpgradeModal?.(); return; }
     if (!name.trim()) {
       showToast('Indiquez d’abord le nom de l’article pour guider l’IA', 'info');
       return;
@@ -245,6 +247,7 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
 
   // 2. "Sublimer la photo ✨" : AI Photo Enhancement
   const handleEnhanceImage = async (index: number) => {
+    if (!getVendorEntitlements(vendeur).hasPremiumAccess) { showToast('La retouche photo par IA est réservée à l’essai et au Pack VIP.', 'info'); _onOpenUpgradeModal?.(); return; }
     const targetImage = images[index];
     if (!targetImage) return;
 
@@ -268,6 +271,7 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
 
   // 3. "Générer une bannière promo 🎨" : Text-to-Image Generation
   const handleGeneratePromoImage = async () => {
+    if (!getVendorEntitlements(vendeur).hasPremiumAccess) { showToast('La génération d’images IA est réservée à l’essai et au Pack VIP.', 'info'); _onOpenUpgradeModal?.(); return; }
     if (!imagePrompt.trim()) {
       showToast('Veuillez décrire l’image ou la bannière souhaitée', 'info');
       return;

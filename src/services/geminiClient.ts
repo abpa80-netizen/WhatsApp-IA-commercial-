@@ -1,3 +1,4 @@
+import { auth } from '../firebase';
 import { generateProductDescription as generateLocalDescription } from './aiGenerator';
 
 export interface ChatMessage {
@@ -30,9 +31,10 @@ export const GeminiClient = {
     language?: 'fr' | 'darija';
   }): Promise<string> {
     try {
+      const idToken = await auth.currentUser?.getIdToken();
       const res = await fetch('/api/ai/describe', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
         body: JSON.stringify(params),
       });
 
@@ -47,6 +49,9 @@ export const GeminiClient = {
       }
       throw new Error('Réponse vide du serveur');
     } catch (err: any) {
+      if (/essai gratuit est terminé|accès premium verrouillé|outils IA sont verrouillés/i.test(String(err?.message || ''))) {
+        throw err;
+      }
       console.warn('API description failed, using local generator fallback:', err.message);
       // Seamless fallback
       return generateLocalDescription(
@@ -66,9 +71,10 @@ export const GeminiClient = {
     vendorContext?: VendorContext;
   }): Promise<string> {
     try {
+      const idToken = await auth.currentUser?.getIdToken();
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
         body: JSON.stringify(params),
       });
 
@@ -89,9 +95,10 @@ export const GeminiClient = {
    * Generates an advertising/promo image from a text prompt.
    */
   async generateImage(prompt: string, aspectRatio: string = '1:1'): Promise<string> {
+    const idToken = await auth.currentUser?.getIdToken();
     const res = await fetch('/api/ai/image/generate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
       body: JSON.stringify({ prompt, aspectRatio }),
     });
 
@@ -111,9 +118,10 @@ export const GeminiClient = {
    * Enhances an existing product photo (studio lighting, clean background, high resolution).
    */
   async enhanceImage(imageBase64: string, action: 'enhance' | 'studio' | 'clean_bg' = 'enhance'): Promise<string> {
+    const idToken = await auth.currentUser?.getIdToken();
     const res = await fetch('/api/ai/image/enhance', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
       body: JSON.stringify({ imageBase64, action }),
     });
 
