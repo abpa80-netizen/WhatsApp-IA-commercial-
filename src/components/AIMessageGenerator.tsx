@@ -24,7 +24,8 @@ import {
   Loader2,
   PhoneCall,
   Clock,
-  Sparkle
+  Sparkle,
+  Crown
 } from 'lucide-react';
 import { generateCommercialScript, formatCurrency } from '../services/aiGenerator';
 import { GeminiClient, ChatMessage } from '../services/geminiClient';
