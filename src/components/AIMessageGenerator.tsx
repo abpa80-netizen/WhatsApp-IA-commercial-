@@ -332,7 +332,7 @@ Inclus des emojis percutants et un appel à l'action clair.`;
         <p className="text-sm text-slate-600">Votre période d’essai est terminée. En mode gratuit, le catalogue public reste limité à 4 produits et l’accès à l’IA, au CRM et aux analyses est désactivé.</p>
         <div className="flex flex-col sm:flex-row justify-center gap-3 pt-2">
           <button onClick={onOpenUpgradeModal} className="inline-flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#20ba59] text-slate-950 font-bold px-6 py-3 rounded-xl"><Crown className="w-4 h-4" /> Débloquer le Pack VIP</button>
-          <a href={`https://wa.me/?text=${encodeURIComponent('Je souhaite en savoir plus sur le Pack VIP de WhatsApp Commercial AI.')}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold px-6 py-3 rounded-xl"><MessageCircle className="w-4 h-4" /> Poser une question</a>
+          <button onClick={onOpenUpgradeModal} className="inline-flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold px-6 py-3 rounded-xl"><MessageCircle className="w-4 h-4" /> Voir l’offre et contacter le support</button>
         </div>
       </div>
     );
