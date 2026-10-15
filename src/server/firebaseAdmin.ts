@@ -101,8 +101,30 @@ export function getAdminDb(): Firestore {
     if (!getApps().length) {
       const projectId = getFirebaseProjectId();
 
-      // 1. Full JSON string in FIREBASE_SERVICE_ACCOUNT_KEY
-      if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+      // Prefer the separate credentials when both formats are configured.
+      // This prevents an old/stale FIREBASE_SERVICE_ACCOUNT_KEY JSON variable
+      // from shadowing the refreshed FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY.
+      // 1. Separate client email + private key
+      if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+        const privateKey = normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY);
+        try {
+          initializeApp({
+            credential: cert({
+              projectId,
+              clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+              privateKey,
+            }),
+            projectId,
+          });
+        } catch (credentialError: any) {
+          // Safe metadata only: never include the key or email in logs/errors.
+          throw new Error(
+            `Firebase Admin refuse FIREBASE_PRIVATE_KEY (longueur=${privateKey.length}, lignes=${privateKey.split('\n').length}, BEGIN=${privateKey.includes('-----BEGIN PRIVATE KEY-----')}, END=${privateKey.includes('-----END PRIVATE KEY-----')}). Vérifiez que la valeur provient intégralement du champ private_key du JSON téléchargé.`
+          );
+        }
+      }
+      // 2. Full JSON string fallback when split credentials are not configured
+      else if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
         try {
           const creds = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
 
@@ -124,25 +146,6 @@ export function getAdminDb(): Firestore {
           });
         } catch (parseErr: any) {
           throw new Error(`FIREBASE_SERVICE_ACCOUNT_KEY JSON invalide: ${parseErr.message}`);
-        }
-      }
-      // 2. Separate client email + private key
-      else if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
-        const privateKey = normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY);
-        try {
-          initializeApp({
-            credential: cert({
-              projectId,
-              clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-              privateKey,
-            }),
-            projectId,
-          });
-        } catch (credentialError: any) {
-          // Safe metadata only: never include the key or email in logs/errors.
-          throw new Error(
-            `Firebase Admin refuse FIREBASE_PRIVATE_KEY (longueur=${privateKey.length}, lignes=${privateKey.split('\n').length}, BEGIN=${privateKey.includes('-----BEGIN PRIVATE KEY-----')}, END=${privateKey.includes('-----END PRIVATE KEY-----')}). Vérifiez que la valeur provient intégralement du champ private_key du JSON téléchargé.`
-          );
         }
       }
       // 3. Google Application Default Credentials (e.g. Cloud Run / GCP runtime)
