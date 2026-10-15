@@ -28,10 +28,11 @@ export function getVendorEntitlements(vendeur: Partial<Vendeur> | null | undefin
   const explicitTrialEnd = trialEndValue ? new Date(trialEndValue).getTime() : Number.NaN;
   const trialStartValue = vendeur.trialStartedAt || vendeur.createdAt || vendeur.created_at;
   const trialStart = trialStartValue ? new Date(trialStartValue).getTime() : Number.NaN;
-  // Prefer an explicit persisted end date. Fall back to the registration timestamp only when valid.
-  const trialEnd = Number.isFinite(explicitTrialEnd)
-    ? explicitTrialEnd
-    : (Number.isFinite(trialStart) ? trialStart + TRIAL_DURATION_MS : Number.NaN);
+  // Match the trial banner: registration time + 3 days is authoritative when available,
+  // so a stale legacy expiration field can never extend a trial.
+  const trialEnd = Number.isFinite(trialStart)
+    ? trialStart + TRIAL_DURATION_MS
+    : explicitTrialEnd;
   const statusAllowsTrial = vendeur.status !== 'Gratuit' && vendeur.status !== 'Inactif' && vendeur.status !== 'Suspendu' && vendeur.plan !== 'Gratuit';
   const isTrialActive = statusAllowsTrial && Number.isFinite(trialEnd) && trialEnd > now;
   const isFreeMode = !isTrialActive;
