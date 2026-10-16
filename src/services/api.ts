@@ -276,6 +276,10 @@ export const ApiService = {
     });
   },
 
+  async trackProductClick(vendeurId: string, productId: string): Promise<void> {
+    await FirestoreService.logAnalyticsEvent({ vendeur_id: vendeurId, type: 'product_click', productId });
+  },
+
   async trackConversion(vendeurId: string, productId?: string): Promise<void> {
     await FirestoreService.logAnalyticsEvent({
       vendeur_id: vendeurId,
