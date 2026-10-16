@@ -296,8 +296,8 @@ export const FirestoreService = {
     if (isSuspended) {
       fullCatalog = false;
     } else if (isVip) {
-      const vipEnd = d.vipEndsAt;
-      fullCatalog = !vipEnd || new Date(vipEnd).getTime() > Date.now();
+      // Reuse the normalized active-VIP decision so Firestore Timestamp and ISO dates behave consistently.
+      fullCatalog = isVipActive;
     } else if (d.plan === 'Gratuit' || d.status === 'Gratuit') {
       fullCatalog = false;
     } else if (d.trialStartedAt || d.createdAt || d.created_at || d.trialEndsAt || d.date_expiration_essai) {
