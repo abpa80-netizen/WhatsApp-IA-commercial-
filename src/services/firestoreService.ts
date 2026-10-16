@@ -791,6 +791,8 @@ export const FirestoreService = {
         type: event.type,
         productId: event.productId || null,
         source: 'public_store_v1',
+        // Only events emitted after the verified-tracking rollout count as real analytics.
+        verifiedTracking: true,
         timestamp: new Date().toISOString(),
       });
     } catch (err) {
@@ -823,7 +825,7 @@ export const FirestoreService = {
         snap.forEach(docSnap => {
           const ev = docSnap.data();
           // Ignore legacy/demo telemetry created before source-tagged real tracking.
-          if (ev.source !== 'public_store_v1') return;
+          if (ev.source !== 'public_store_v1' || ev.verifiedTracking !== true) return;
           const evDate = (ev.timestamp || '').slice(0, 10);
           if (dailyMap[evDate]) {
             if (ev.type === 'view') dailyMap[evDate].views++;
