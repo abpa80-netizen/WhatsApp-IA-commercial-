@@ -314,6 +314,23 @@ function MainApp() {
     };
   }, []);
 
+  // Refresh CRM data from the authenticated seller's Firestore scope while the CRM is open.
+  useEffect(() => {
+    if (!activeVendeur?.id || activeTab !== 'crm' || viewMode !== 'app') return;
+    let cancelled = false;
+    const refreshProspects = async () => {
+      try {
+        const latest = await ApiService.getProspects(activeVendeur.id);
+        if (!cancelled) setProspects(latest);
+      } catch (error) {
+        console.error('[CRM] Actualisation des prospects impossible:', error);
+      }
+    };
+    void refreshProspects();
+    const timer = window.setInterval(() => { void refreshProspects(); }, 15000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [activeVendeur?.id, activeTab, viewMode]);
+
   // When active vendor changes, load their products and prospects
   const reloadVendeurData = async (vendeurId: string) => {
     try {
