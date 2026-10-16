@@ -74,6 +74,7 @@
         "currency": { "type": "string", "enum": ["MAD", "CFA"], "description": "Devise de la boutique" },
         "is_active": { "type": "boolean", "description": "Boutique active ou suspendue" },
         "hasFullCatalog": { "type": "boolean", "description": "Accès au catalogue complet ou restreint à 4 produits" },
+        "isVipActive": { "type": "boolean", "description": "Indique si le badge public VIP est actif, sans exposer les dates privées" },
         "publicSlug": { "type": "string", "description": "Slug d'accès public", "maxLength": 64 },
         "orderWhatsApp": { "type": "string", "description": "Numéro commercial de commande consenti", "maxLength": 32 },
         "allowCommercialContact": { "type": "boolean", "description": "Consentement explicite du contact commercial" },
@@ -104,7 +105,8 @@
         "vendeur_id": { "type": "string", "description": "UID du vendeur concerné" },
         "type": { "type": "string", "enum": ["view", "product_click", "conversion"], "description": "Type d'événement" },
         "productId": { "type": "string", "description": "ID du produit concerné" },
-        "timestamp": { "type": "string", "description": "Horodatage de l'événement" }
+        "timestamp": { "type": "string", "description": "Horodatage de l'événement" },
+        "source": { "type": "string", "description": "Origine du suivi analytique pour distinguer les événements vérifiés des anciennes données" }
       },
       "required": ["id", "vendeur_id", "type", "timestamp"]
     }
