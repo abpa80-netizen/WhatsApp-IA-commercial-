@@ -14,6 +14,7 @@ export interface PublicStoreProfile {
   status?: VendeurStatus;
   is_active?: boolean;
   hasFullCatalog?: boolean; // Minimal activation state: true if full catalog is allowed, false if limited to 4 products
+  isVipActive?: boolean; // Safe public entitlement flag; never exposes subscription dates
   publicSlug: string;
   orderWhatsApp?: string; // Optional commercial contact for WhatsApp checkout if explicitly provided AND allowed
   allowCommercialContact?: boolean;
