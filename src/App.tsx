@@ -236,7 +236,7 @@ function MainApp() {
             const prods = await ApiService.getCatalog(publicStore.id);
             if (isSubscribed) {
               setPublicStoreProducts(prods);
-              ApiService.trackView(publicStore.id);
+              // PublicStore records the session-guarded shop visit.
             }
           } else {
             setPublicStoreVendeur(null);
@@ -315,6 +315,23 @@ function MainApp() {
   }, []);
 
   // Refresh CRM data from the authenticated seller's Firestore scope while the CRM is open.
+  useEffect(() => {
+    if (!activeVendeur?.id || activeTab !== 'crm' || viewMode !== 'app') return;
+    let cancelled = false;
+    const refreshProspects = async () => {
+      try {
+        const latest = await ApiService.getProspects(activeVendeur.id);
+        if (!cancelled) setProspects(latest);
+      } catch (error) {
+        console.error('[CRM] Actualisation des prospects impossible:', error);
+      }
+    };
+    void refreshProspects();
+    const timer = window.setInterval(() => { void refreshProspects(); }, 15000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [activeVendeur?.id, activeTab, viewMode]);
+
+  // Refresh CRM data while the CRM tab is open.
   useEffect(() => {
     if (!activeVendeur?.id || activeTab !== 'crm' || viewMode !== 'app') return;
     let cancelled = false;
