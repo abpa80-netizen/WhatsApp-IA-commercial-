@@ -372,7 +372,7 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
       `🛍️ *Découvrez le catalogue en ligne de ${vendeur.name}*\n\n` +
       `Bonjour ! Consultez tous nos articles disponibles et passez commande directement sur WhatsApp :\n` +
       `👉 ${catalogUrl}\n\n` +
-      `📦 Commande simple, service rapide & livraison garantie !`
+      `Consultez les détails du produit et contactez le vendeur pour connaître les modalités de commande.`
     );
     window.open(`https://wa.me/?text=${text}`, '_blank');
     showToast('Lien de partage du catalogue ouvert sur WhatsApp !', 'success');
@@ -386,8 +386,8 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
       `✨ *Article : ${prod.name}*\n` +
       `💰 Prix : *${priceFormatted}*\n\n` +
       `${prod.description ? `${prod.description}\n\n` : ''}` +
-      `👉 Commander directement sur WhatsApp : ${catalogUrl}\n` +
-      `📞 Vendeur : ${vendeur.phone}`
+      `👉 Voir le produit dans le catalogue : ${catalogUrl}\n` +
+      `📞 Contact vendeur : ${vendeur.phone}`
     );
     window.open(`https://wa.me/?text=${text}`, '_blank');
     showToast('Fiche article prête à envoyer sur WhatsApp !', 'success');
