@@ -194,6 +194,7 @@ export async function recalculateAllEntitlementsServer(): Promise<RecalculationS
 
       try {
         const entitlement = computeVendorEntitlements(userData, now, dynamicTrialDays);
+        const isVipActive = entitlement.reason === 'vip_active';
 
         if (entitlement.is_active && entitlement.hasFullCatalog) {
           summary.fullCatalogCount++;
@@ -210,11 +211,12 @@ export async function recalculateAllEntitlementsServer(): Promise<RecalculationS
         const currentData = storeSnap.exists ? storeSnap.data() : null;
         const currentHasFull = currentData?.hasFullCatalog;
         const currentIsActive = currentData?.is_active;
+        const currentIsVipActive = currentData?.isVipActive;
 
         const sensitivePublicFields = ['role', 'status', 'plan', 'trialStartedAt', 'trialEndsAt', 'date_expiration_essai', 'vipStartedAt', 'vipEndsAt', 'whatsappNumber', 'phone', 'phoneNormalized'];
         const hasSensitivePublicFields = Boolean(currentData && sensitivePublicFields.some((key) => key in currentData));
 
-        if (!storeSnap.exists || currentHasFull !== entitlement.hasFullCatalog || currentIsActive !== entitlement.is_active || hasSensitivePublicFields) {
+        if (!storeSnap.exists || currentHasFull !== entitlement.hasFullCatalog || currentIsActive !== entitlement.is_active || currentIsVipActive !== isVipActive || hasSensitivePublicFields) {
           const purgePrivateFields: Record<string, any> = {};
           for (const key of ['role', 'status', 'plan', 'trialStartedAt', 'trialEndsAt', 'date_expiration_essai', 'vipStartedAt', 'vipEndsAt', 'whatsappNumber', 'phone', 'phoneNormalized']) {
             purgePrivateFields[key] = FieldValue.delete();
@@ -224,6 +226,7 @@ export async function recalculateAllEntitlementsServer(): Promise<RecalculationS
               id: uid,
               hasFullCatalog: entitlement.hasFullCatalog,
               is_active: entitlement.is_active,
+              isVipActive,
               updatedAt: new Date().toISOString(),
               ...purgePrivateFields,
             },
@@ -246,7 +249,7 @@ export async function recalculateAllEntitlementsServer(): Promise<RecalculationS
         const storeUid = storeDoc.id;
         if (!validUserIds.has(storeUid)) {
           const storeData = storeDoc.data();
-          if (storeData.is_active !== false || storeData.hasFullCatalog !== false) {
+          if (storeData.is_active !== false || storeData.hasFullCatalog !== false || storeData.isVipActive !== false) {
             const purgePrivateFields: Record<string, any> = {};
             for (const key of ['role', 'status', 'plan', 'trialStartedAt', 'trialEndsAt', 'date_expiration_essai', 'vipStartedAt', 'vipEndsAt', 'whatsappNumber', 'phone', 'phoneNormalized']) {
               purgePrivateFields[key] = FieldValue.delete();
@@ -255,6 +258,7 @@ export async function recalculateAllEntitlementsServer(): Promise<RecalculationS
               {
                 hasFullCatalog: false,
                 is_active: false,
+                isVipActive: false,
                 updatedAt: new Date().toISOString(),
                 ...purgePrivateFields,
               },
