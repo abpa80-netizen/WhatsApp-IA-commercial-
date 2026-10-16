@@ -153,6 +153,18 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
     }
   };
 
+  // Open a product directly when a shared product link includes ?product=<id>.
+  useEffect(() => {
+    if (typeof window === 'undefined' || selectedProduct || products.length === 0) return;
+    const requestedProductId = new URLSearchParams(window.location.search).get('product');
+    if (!requestedProductId) return;
+    const requestedProduct = products.find((product) => product.id === requestedProductId);
+    if (requestedProduct) {
+      setSelectedProduct(requestedProduct);
+      setActiveImageIndex(0);
+    }
+  }, [products, selectedProduct]);
+
   const handleCloseProductModal = () => {
     setSelectedProduct(null);
     if (window.history.state?.modal === 'product_detail') {
