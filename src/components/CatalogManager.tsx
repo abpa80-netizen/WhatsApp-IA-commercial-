@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { formatCurrency } from '../services/aiGenerator';
 import { useToast } from './Toast';
-import { uploadImageToStorage, ACCEPTED_IMAGE_TYPES } from '../services/imageUpload';
+import { uploadImageToStorage, uploadDataUriToCloudinary, ACCEPTED_IMAGE_TYPES } from '../services/imageUpload';
 import { GeminiClient } from '../services/geminiClient';
 import { getVendorEntitlements } from '../services/entitlements';
 
@@ -314,6 +314,20 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
 
     setIsSubmitting(true);
     try {
+      // 1. Convertir et téléverser toute image générée par IA (Data URI Base64) vers Cloudinary
+      // afin de garantir qu'aucun lien temporaire blob: ou chaîne Base64 n'est persisté dans Firestore.
+      const finalImages: string[] = [];
+      for (let i = 0; i < images.slice(0, 3).length; i++) {
+        const img = images[i];
+        if (img && img.startsWith('data:image/')) {
+          showToast('Enregistrement permanent de la photo IA sur Cloudinary...', 'info');
+          const permanentUrl = await uploadDataUriToCloudinary(img, 'products', `ai_${Date.now()}_${i}.png`);
+          finalImages.push(permanentUrl);
+        } else if (img && !img.startsWith('blob:')) {
+          finalImages.push(img);
+        }
+      }
+
       await onSaveProduct({
         id: editingProduct?.id,
         name: name.trim(),
@@ -321,7 +335,7 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
         original_price: originalPrice !== '' ? Number(originalPrice) : undefined,
         description: description.trim(),
         category: category.trim() || 'Général',
-        images: images.slice(0, 3),
+        images: finalImages,
       });
 
       showToast(editingProduct ? 'Produit mis à jour avec succès' : 'Nouveau produit ajouté au catalogue !', 'success');

@@ -107,7 +107,10 @@ export const GeminiClient = {
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.error || 'Erreur lors de la génération d’image');
+      const err: any = new Error(data.error || 'Erreur lors de la génération d’image');
+      err.status = res.status;
+      err.code = data.code;
+      throw err;
     }
 
     if (!data.imageUrl) {
@@ -130,7 +133,10 @@ export const GeminiClient = {
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data.error || 'Erreur lors de l’amélioration de la photo');
+      const err: any = new Error(data.error || 'Erreur lors de l’amélioration de la photo');
+      err.status = res.status;
+      err.code = data.code;
+      throw err;
     }
 
     if (!data.imageUrl) {

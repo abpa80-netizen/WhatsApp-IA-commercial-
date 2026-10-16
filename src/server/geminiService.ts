@@ -17,6 +17,11 @@ import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import { verifyFirebaseUserDetails } from './cloudinarySign.ts';
 import { getAdminDb } from './firebaseAdmin.ts';
+import { 
+  generateImageWithCloudflare, 
+  isCloudflareConfigured, 
+  CloudflareImageConfig 
+} from './cloudflareWorkersAi.ts';
 
 dotenv.config();
 
@@ -412,7 +417,21 @@ ${location ? `- Emplacement : ${location}` : ''}
 /**
  * Handler universel pour la génération d'images promotionnelles (/api/ai/image/generate)
  */
-export async function handleAIImageGenerate(req: any, res: any, customAi?: GoogleGenAI | null) {
+export interface ImageGenerateOptions {
+  customAi?: GoogleGenAI | null;
+  skipAuth?: boolean;
+  cloudflareConfig?: CloudflareImageConfig;
+}
+
+/**
+ * Handler universel pour la génération d'images promotionnelles (/api/ai/image/generate)
+ * avec bascule automatique résiliente vers Cloudflare Workers AI en cas d'épuisement de quota (429) ou indisponibilité (503).
+ */
+export async function handleAIImageGenerate(
+  req: any,
+  res: any,
+  options?: ImageGenerateOptions | GoogleGenAI | null
+) {
   if (req.method === 'OPTIONS') {
     return sendJson(res, 204, {});
   }
@@ -421,24 +440,30 @@ export async function handleAIImageGenerate(req: any, res: any, customAi?: Googl
     return sendJson(res, 405, { error: 'Méthode non autorisée. Utilisez POST.', code: 'METHOD_NOT_ALLOWED' });
   }
 
-  const ai = customAi !== undefined ? customAi : getGeminiClient();
-  if (!ai) {
-    return sendJson(res, 401, {
-      error: 'Clé API Gemini non configurée côté serveur.',
-      code: 'AUTH_ERROR',
-    });
+  const resolvedOptions: ImageGenerateOptions = options instanceof GoogleGenAI 
+    ? { customAi: options, skipAuth: false } 
+    : (options || {});
+
+  // 1. Contrôle strict des droits d'accès VIP / Essai actif (aucune bascule si accès non autorisé)
+  if (!resolvedOptions.skipAuth) {
+    const isAllowed = await requirePremiumSeller(req, res);
+    if (!isAllowed) return;
   }
 
-  try {
-    const { prompt, aspectRatio = '1:1' } = req.body || {};
+  const { prompt, aspectRatio = '1:1' } = req.body || {};
 
-    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
-      return sendJson(res, 400, { error: 'Le prompt de description est obligatoire.', code: 'INVALID_INPUT' });
-    }
+  // 2. Validation stricte du prompt
+  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+    return sendJson(res, 400, { error: 'Le prompt de description est obligatoire.', code: 'INVALID_INPUT' });
+  }
 
-    const enhancedPrompt = `Professional commercial product photography, studio lighting, advertising quality, highly detailed, crisp focus, clean background: ${prompt.trim()}`;
+  const enhancedPrompt = `Professional commercial product photography, studio lighting, advertising quality, highly detailed, crisp focus, clean background: ${prompt.trim()}`;
 
-    let lastErr: any = null;
+  // 3. Tentative avec le fournisseur principal (Gemini Imagen)
+  const ai = resolvedOptions.customAi !== undefined ? resolvedOptions.customAi : getGeminiClient();
+  let lastGeminiErr: any = null;
+
+  if (ai) {
     for (const model of VERIFIED_IMAGE_MODELS) {
       try {
         const response = await ai.models.generateContent({
@@ -459,24 +484,83 @@ export async function handleAIImageGenerate(req: any, res: any, customAi?: Googl
         if (imagePart && imagePart.inlineData?.data) {
           const mime = imagePart.inlineData.mimeType || 'image/png';
           const imageUrl = `data:${mime};base64,${imagePart.inlineData.data}`;
-          return sendJson(res, 200, { imageUrl });
+          return sendJson(res, 200, { 
+            imageUrl, 
+            provider: 'gemini', 
+            model 
+          });
         }
       } catch (err: any) {
-        lastErr = err;
-        console.warn(`[GeminiService Image Error] Modèle "${model}" :`, err?.message || err);
+        lastGeminiErr = err;
+        console.warn(`[Gemini Image Error] Modèle "${model}" :`, err?.message || err);
       }
     }
+  } else {
+    lastGeminiErr = { status: 401, message: 'Clé Gemini non configurée' };
+  }
 
-    const sanitized = sanitizeGeminiError(lastErr);
-    return sendJson(res, sanitized.status, {
-      error: sanitized.message,
-      code: sanitized.code,
+  const sanitizedGemini = sanitizeGeminiError(lastGeminiErr);
+
+  // 4. Condition stricte de bascule : uniquement en cas d'épuisement de quota (429) ou d'indisponibilité (503)
+  const isQuotaOrUnavailable = sanitizedGemini.code === 'RATE_LIMIT' || sanitizedGemini.code === 'SERVICE_UNAVAILABLE';
+
+  if (!isQuotaOrUnavailable) {
+    // Si c'est une erreur d'authentification ou d'incompatibilité, on ne bascule pas
+    return sendJson(res, sanitizedGemini.status, {
+      error: sanitizedGemini.message,
+      code: sanitizedGemini.code,
+      provider: 'gemini',
     });
-  } catch (error: any) {
-    const sanitized = sanitizeGeminiError(error);
-    return sendJson(res, sanitized.status, {
-      error: sanitized.message,
-      code: sanitized.code,
+  }
+
+  // 5. Bascule vers le fournisseur alternatif gratuit : Cloudflare Workers AI
+  console.info('[AI Image Fallback] Quota Gemini atteint ou indisponible. Bascule vers Cloudflare Workers AI...');
+
+  if (!isCloudflareConfigured(resolvedOptions.cloudflareConfig)) {
+    return sendJson(res, 429, {
+      error: 'Le quota gratuit de génération d’images Gemini est atteint pour aujourd’hui. Le fournisseur alternatif Cloudflare Workers AI n’est pas configuré sur le serveur (variables CLOUDFLARE_ACCOUNT_ID et CLOUDFLARE_API_TOKEN requises). Vous pouvez importer une photo manuellement.',
+      code: 'QUOTA_EXCEEDED',
+      provider: 'none',
+      fallbackAvailable: false,
+    });
+  }
+
+  try {
+    const cfResult = await generateImageWithCloudflare(enhancedPrompt, {
+      config: resolvedOptions.cloudflareConfig,
+    });
+
+    return sendJson(res, 200, {
+      imageUrl: cfResult.imageUrl,
+      provider: 'cloudflare',
+      model: cfResult.model,
+    });
+  } catch (cfErr: any) {
+    console.error('[Cloudflare Image Error]:', cfErr?.message || cfErr);
+
+    const isCfQuota = cfErr.status === 429 || cfErr.code === 'QUOTA_EXCEEDED';
+    const isCfUnavailable = cfErr.status === 503 || cfErr.code === 'SERVICE_UNAVAILABLE';
+
+    if (isCfQuota) {
+      return sendJson(res, 429, {
+        error: 'Le quota de génération d’images des deux fournisseurs (Gemini et Cloudflare) est atteint. Vous pouvez importer votre photo manuellement.',
+        code: 'QUOTA_EXCEEDED',
+        provider: 'both',
+      });
+    }
+
+    if (isCfUnavailable) {
+      return sendJson(res, 503, {
+        error: 'Tous les services de génération d’images sont momentanément surchargés. Veuillez patienter ou importer une photo manuellement.',
+        code: 'SERVICE_UNAVAILABLE',
+        provider: 'both',
+      });
+    }
+
+    return sendJson(res, cfErr.status || 500, {
+      error: cfErr.message || 'Erreur lors de la génération d’image de secours.',
+      code: cfErr.code || 'PROVIDER_ERROR',
+      provider: 'cloudflare',
     });
   }
 }
@@ -484,7 +568,11 @@ export async function handleAIImageGenerate(req: any, res: any, customAi?: Googl
 /**
  * Handler universel pour sublimer une photo existante (/api/ai/image/enhance)
  */
-export async function handleAIImageEnhance(req: any, res: any, customAi?: GoogleGenAI | null) {
+export async function handleAIImageEnhance(
+  req: any,
+  res: any,
+  options?: { customAi?: GoogleGenAI | null; skipAuth?: boolean } | GoogleGenAI | null
+) {
   if (req.method === 'OPTIONS') {
     return sendJson(res, 204, {});
   }
@@ -493,7 +581,16 @@ export async function handleAIImageEnhance(req: any, res: any, customAi?: Google
     return sendJson(res, 405, { error: 'Méthode non autorisée. Utilisez POST.', code: 'METHOD_NOT_ALLOWED' });
   }
 
-  const ai = customAi !== undefined ? customAi : getGeminiClient();
+  const resolvedOptions = options instanceof GoogleGenAI 
+    ? { customAi: options, skipAuth: false } 
+    : (options || {});
+
+  if (!resolvedOptions.skipAuth) {
+    const isAllowed = await requirePremiumSeller(req, res);
+    if (!isAllowed) return;
+  }
+
+  const ai = resolvedOptions.customAi !== undefined ? resolvedOptions.customAi : getGeminiClient();
   if (!ai) {
     return sendJson(res, 401, {
       error: 'Clé API Gemini non configurée côté serveur.',

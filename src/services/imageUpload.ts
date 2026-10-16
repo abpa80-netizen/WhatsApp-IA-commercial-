@@ -303,3 +303,34 @@ export async function processImageFile(
   return uploadImageToStorage(file, folder, _vendorUid);
 }
 
+/**
+ * Convertit une chaîne Data URI (Base64) en Blob binaire pour le téléversement Cloudinary.
+ */
+export function dataUriToBlob(dataUri: string): Blob {
+  if (!dataUri || !dataUri.startsWith('data:')) {
+    throw new Error('Format Data URI invalide');
+  }
+  const [header, base64Data] = dataUri.split(',');
+  const mimeMatch = header.match(/:(.*?);/);
+  const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+  const byteCharacters = atob(base64Data);
+  const byteNumbers = new Uint8Array(byteCharacters.length);
+  for (let i = 0; i < byteCharacters.length; i++) {
+    byteNumbers[i] = byteCharacters.charCodeAt(i);
+  }
+  return new Blob([byteNumbers.buffer as BlobPart], { type: mimeType });
+}
+
+/**
+ * Téléverse directement une image issue de la génération IA (Base64 data URI)
+ * vers Cloudinary pour garantir qu'aucune chaîne volumineuse ni lien blob: n'est stocké dans Firestore.
+ */
+export async function uploadDataUriToCloudinary(
+  dataUri: string,
+  folder: 'products' | 'logos' = 'products',
+  fileName: string = 'ai_generated.png'
+): Promise<string> {
+  const blob = dataUriToBlob(dataUri);
+  return await uploadToCloudinary(blob, folder, fileName);
+}
+

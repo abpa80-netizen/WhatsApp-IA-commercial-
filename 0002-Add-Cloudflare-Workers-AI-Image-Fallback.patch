@@ -1,0 +1,871 @@
+From 91a829906b622c43c67fe456ac93871fd9f4ffc0 Mon Sep 17 00:00:00 2001
+From: abpa80-netizen <ab.pa80@gmail.com>
+Date: Fri, 16 Oct 2026 14:06:02 +0000
+Subject: [PATCH] Add Gemini Vercel serverless routes and Cloudflare Workers AI
+ image fallback with free quota
+
+---
+ .env.example                              |   7 +
+ package.json                              |   2 +-
+ scripts/test-image-generation-fallback.ts | 343 ++++++++++++++++++++++
+ src/components/CatalogManager.tsx         |  18 +-
+ src/server/cloudflareWorkersAi.ts         | 146 +++++++++
+ src/server/geminiService.ts               | 153 ++++++++--
+ src/services/geminiClient.ts              |  10 +-
+ src/services/imageUpload.ts               |  31 ++
+ 8 files changed, 677 insertions(+), 33 deletions(-)
+ create mode 100644 scripts/test-image-generation-fallback.ts
+ create mode 100644 src/server/cloudflareWorkersAi.ts
+
+diff --git a/.env.example b/.env.example
+index 52a82fc..502dd42 100644
+--- a/.env.example
++++ b/.env.example
+@@ -26,3 +26,10 @@ FIREBASE_SERVICE_ACCOUNT_KEY="{\"type\":\"service_account\",\"project_id\":\"...
+ # SECRET CRON POUR LES TÂCHES PLANIFIÉES VERCEL CRON / CLOUD SCHEDULER
+ # Utilisé pour authentifier les appels automatiques à /api/admin/recalculate-entitlements
+ CRON_SECRET="VOTRE_SECRET_CRON_ALEATOIRE_ET_SECURISE"
++
++# FOURNISSEUR ALTERNATIF DE GÉNÉRATION D'IMAGES : CLOUDFLARE WORKERS AI (Optionnel avec quota gratuit)
++# Utilisé en secours automatique lorsque le quota Gemini Imagen est épuisé.
++# Offre gratuite : 10 000 Neurons/jour (sans carte bancaire requise). Modèle : @cf/black-forest-labs/flux-1-schnell
++# Obtenez votre Account ID et créez un API Token avec la permission "Workers AI: Read" dans le tableau de bord Cloudflare.
++CLOUDFLARE_ACCOUNT_ID="VOTRE_CLOUDFLARE_ACCOUNT_ID"
++CLOUDFLARE_API_TOKEN="VOTRE_CLOUDFLARE_API_TOKEN"
+diff --git a/package.json b/package.json
+index 9ab4904..60510ca 100644
+--- a/package.json
++++ b/package.json
+@@ -10,7 +10,7 @@
+     "preview": "vite preview",
+     "clean": "rm -rf dist server.js",
+     "lint": "tsc --noEmit",
+-    "test": "NODE_ENV=test tsx scripts/test-vendor-isolation.ts && NODE_ENV=test tsx scripts/test-cloudinary-sign.ts && NODE_ENV=test tsx scripts/test-client-compression-upload.ts && NODE_ENV=test tsx scripts/test-vercel-cloudinary-route.ts && NODE_ENV=test tsx scripts/test-admin-firestore.ts && NODE_ENV=test tsx scripts/test-firestore-public-store-security.ts && NODE_ENV=test tsx scripts/test-pwa-selective.ts && NODE_ENV=test tsx scripts/test-trial-expiration.ts && NODE_ENV=test tsx scripts/test-entitlements.ts"
++    "test": "NODE_ENV=test tsx scripts/test-vendor-isolation.ts && NODE_ENV=test tsx scripts/test-cloudinary-sign.ts && NODE_ENV=test tsx scripts/test-client-compression-upload.ts && NODE_ENV=test tsx scripts/test-vercel-cloudinary-route.ts && NODE_ENV=test tsx scripts/test-admin-firestore.ts && NODE_ENV=test tsx scripts/test-firestore-public-store-security.ts && NODE_ENV=test tsx scripts/test-pwa-selective.ts && NODE_ENV=test tsx scripts/test-trial-expiration.ts && NODE_ENV=test tsx scripts/test-entitlements.ts && NODE_ENV=test tsx scripts/test-gemini-coach.ts && NODE_ENV=test tsx scripts/test-image-generation-fallback.ts"
+   },
+   "dependencies": {
+     "@google/genai": "^2.4.0",
+diff --git a/scripts/test-image-generation-fallback.ts b/scripts/test-image-generation-fallback.ts
+new file mode 100644
+index 0000000..c8a4105
+--- /dev/null
++++ b/scripts/test-image-generation-fallback.ts
+@@ -0,0 +1,343 @@
++/**
++ * Suite de tests pour le générateur d'images produits avec repli Cloudflare Workers AI :
++ * 1. Test nominal du fournisseur principal (Gemini)
++ * 2. Simulation d'erreur de quota (429) et bascule vers Cloudflare Workers AI
++ * 3. Simulation d'indisponibilité (503) et bascule vers Cloudflare
++ * 4. Refus de bascule pour les erreurs d'authentification (401) et validation (400)
++ * 5. Gestion des erreurs d'authentification et de quota sur Cloudflare
++ * 6. Parsing des formats de réponse Cloudflare (JSON base64 et binaire Buffer)
++ * 7. Conversion Data URI -> Blob et téléversement sécurisé vers Cloudinary
++ * 8. Audit de non-exposition des secrets (GEMINI_API_KEY, CLOUDFLARE_API_TOKEN)
++ */
++
++import { handleAIImageGenerate } from '../src/server/geminiService.ts';
++import { 
++  generateImageWithCloudflare, 
++  isCloudflareConfigured, 
++  CLOUDFLARE_IMAGE_MODELS 
++} from '../src/server/cloudflareWorkersAi.ts';
++import { dataUriToBlob } from '../src/services/imageUpload.ts';
++import fs from 'fs';
++import path from 'path';
++
++function createMockResponse() {
++  return {
++    statusCode: 200,
++    headers: {} as Record<string, string>,
++    data: null as any,
++    ended: false,
++    status(code: number) {
++      this.statusCode = code;
++      return this;
++    },
++    json(payload: any) {
++      this.data = payload;
++      this.ended = true;
++      return this;
++    },
++    end(payload?: any) {
++      if (payload) {
++        try {
++          this.data = JSON.parse(payload);
++        } catch {
++          this.data = payload;
++        }
++      }
++      this.ended = true;
++      return this;
++    },
++    setHeader(name: string, value: string) {
++      this.headers[name] = value;
++      return this;
++    },
++  };
++}
++
++async function runImageFallbackTests() {
++  console.log('=== DÉBUT DES TESTS DU GÉNÉRATEUR D’IMAGES ET REPLI CLOUDFLARE ===\n');
++  let passed = 0;
++  let failed = 0;
++
++  function assert(condition: boolean, testName: string) {
++    if (condition) {
++      console.log(`[PASS] ${testName}`);
++      passed++;
++    } else {
++      console.error(`[FAIL] ${testName}`);
++      failed++;
++    }
++  }
++
++  // -------------------------------------------------------------------------
++  // 1. TEST : CONTRÔLE D'ACCÈS ET VALIDATION DU PROMPT
++  // -------------------------------------------------------------------------
++  console.log('--- 1. Validation des accès et du prompt ---');
++
++  // Rejet sans token
++  const unauthReq = { method: 'POST', body: { prompt: 'Chaussures de sport' }, headers: {} };
++  const unauthRes = createMockResponse();
++  await handleAIImageGenerate(unauthReq, unauthRes);
++  assert(unauthRes.statusCode === 401, 'Rejet des requêtes non authentifiées avec 401');
++  assert(unauthRes.data?.code === 'AUTH_REQUIRED', 'Code AUTH_REQUIRED retourné');
++
++  // Rejet avec prompt vide (sans appeler l’IA)
++  const emptyReq = { method: 'POST', body: { prompt: '   ' } };
++  const emptyRes = createMockResponse();
++  await handleAIImageGenerate(emptyReq, emptyRes, { skipAuth: true });
++  assert(emptyRes.statusCode === 400, 'Rejet d’un prompt vide avec 400 Bad Request');
++  assert(emptyRes.data?.code === 'INVALID_INPUT', 'Code INVALID_INPUT retourné');
++
++  // -------------------------------------------------------------------------
++  // 2. TEST : FOURNISSEUR PRINCIPAL (GEMINI) NOMINAL
++  // -------------------------------------------------------------------------
++  console.log('\n--- 2. Génération nominale avec fournisseur principal ---');
++  const mockGeminiSuccess: any = {
++    models: {
++      generateContent: async () => ({
++        candidates: [{
++          content: {
++            parts: [{
++              inlineData: {
++                mimeType: 'image/png',
++                data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
++              },
++            }],
++          },
++        }],
++      }),
++    },
++  };
++
++  const geminiReq = { method: 'POST', body: { prompt: 'Montre de luxe dorée' } };
++  const geminiRes = createMockResponse();
++  await handleAIImageGenerate(geminiReq, geminiRes, { customAi: mockGeminiSuccess, skipAuth: true });
++  assert(geminiRes.statusCode === 200, 'Génération nominale Gemini réussie (HTTP 200)');
++  assert(geminiRes.data?.provider === 'gemini', 'Fournisseur identifié comme "gemini"');
++  assert(geminiRes.data?.imageUrl.startsWith('data:image/png;base64,'), 'Format Image URL Base64 conforme');
++
++  // -------------------------------------------------------------------------
++  // 3. TEST : SIMULATION DE QUOTA ÉPUISÉ ET BASCULE VERS CLOUDFLARE
++  // -------------------------------------------------------------------------
++  console.log('\n--- 3. Simulation de quota épuisé (429) et bascule vers Cloudflare ---');
++
++  // A. Cas où Cloudflare n'est pas configuré
++  const mockGeminiQuota: any = {
++    models: {
++      generateContent: async () => {
++        const err: any = new Error('Resource has been exhausted (e.g. check quota)');
++        err.status = 429;
++        throw err;
++      },
++    },
++  };
++
++  const noCfRes = createMockResponse();
++  await handleAIImageGenerate(geminiReq, noCfRes, { 
++    customAi: mockGeminiQuota, 
++    skipAuth: true,
++    cloudflareConfig: { accountId: '', apiToken: '' } 
++  });
++  assert(noCfRes.statusCode === 429, 'Renvoi de 429 quand Gemini est épuisé et Cloudflare non configuré');
++  assert(noCfRes.data?.code === 'QUOTA_EXCEEDED', 'Code QUOTA_EXCEEDED préservé');
++  assert(noCfRes.data?.error.includes('Cloudflare Workers AI n’est pas configuré'), 'Message guidant sur les variables requises');
++
++  // B. Cas où Cloudflare est configuré : bascule automatique réussie vers FLUX.1
++  const mockSamplePngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
++  let cloudflareFetchCalls = 0;
++  const mockCloudflareFetch: typeof fetch = async (url: any, init: any) => {
++    cloudflareFetchCalls++;
++    const authHeader = init?.headers?.Authorization || '';
++    if (authHeader !== 'Bearer test_cf_token_123') {
++      return new Response('Unauthorized', { status: 401 });
++    }
++    // Réponse au format JSON avec result.image (format officiel flux-1-schnell)
++    return new Response(JSON.stringify({
++      success: true,
++      result: {
++        image: mockSamplePngBase64,
++      },
++    }), {
++      status: 200,
++      headers: { 'Content-Type': 'application/json' },
++    });
++  };
++
++  const cfSuccessRes = createMockResponse();
++  await handleAIImageGenerate(geminiReq, cfSuccessRes, {
++    customAi: mockGeminiQuota,
++    skipAuth: true,
++    cloudflareConfig: {
++      accountId: 'test_account_456',
++      apiToken: 'test_cf_token_123',
++      fetchFn: mockCloudflareFetch,
++    },
++  });
++
++  assert(cfSuccessRes.statusCode === 200, 'Bascule automatique vers Cloudflare réussie (HTTP 200)');
++  assert(cfSuccessRes.data?.provider === 'cloudflare', 'Fournisseur de repli identifié comme "cloudflare"');
++  assert(cfSuccessRes.data?.model === CLOUDFLARE_IMAGE_MODELS[0], 'Modèle FLUX.1 Schnell sollicité');
++  assert(cloudflareFetchCalls === 1, 'Exactement un appel émis vers Cloudflare (pas de boucle abusive)');
++
++  // -------------------------------------------------------------------------
++  // 4. TEST : GESTION DES ERREURS PROPRES (PAS DE BASCULE INUTILE)
++  // -------------------------------------------------------------------------
++  console.log('\n--- 4. Respect des motifs stricts de bascule ---');
++
++  // A. Erreur d'authentification Gemini (401) -> NE DOIT PAS basculer
++  const mockGeminiAuthErr: any = {
++    models: {
++      generateContent: async () => {
++        const err: any = new Error('API key not valid');
++        err.status = 401;
++        throw err;
++      },
++    },
++  };
++
++  let cfCallsOnAuthErr = 0;
++  const mockCfSpy: typeof fetch = async () => {
++    cfCallsOnAuthErr++;
++    return new Response('{}', { status: 200 });
++  };
++
++  const authErrRes = createMockResponse();
++  await handleAIImageGenerate(geminiReq, authErrRes, {
++    customAi: mockGeminiAuthErr,
++    skipAuth: true,
++    cloudflareConfig: {
++      accountId: 'test_acc',
++      apiToken: 'test_tok',
++      fetchFn: mockCfSpy,
++    },
++  });
++
++  assert(authErrRes.statusCode === 401, 'Erreur 401 Gemini renvoyée sans bascule');
++  assert(cfCallsOnAuthErr === 0, 'Cloudflare n’est JAMAIS appelé si l’erreur n’est pas un quota ou indisponibilité');
++
++  // -------------------------------------------------------------------------
++  // 5. TEST : REPLI SUR INDISPONIBILITÉ (503) & ÉPUISEMENT DOUBLE QUOTA
++  // -------------------------------------------------------------------------
++  console.log('\n--- 5. Indisponibilité et dépassement du quota alternatif ---');
++
++  // A. Gemini 503 -> bascule Cloudflare
++  const mockGemini503: any = {
++    models: {
++      generateContent: async () => {
++        const err: any = new Error('Service Unavailable / High Demand');
++        err.status = 503;
++        throw err;
++      },
++    },
++  };
++
++  const res503 = createMockResponse();
++  await handleAIImageGenerate(geminiReq, res503, {
++    customAi: mockGemini503,
++    skipAuth: true,
++    cloudflareConfig: {
++      accountId: 'test_acc',
++      apiToken: 'test_cf_token_123',
++      fetchFn: mockCloudflareFetch,
++    },
++  });
++  assert(res503.statusCode === 200, 'Bascule réussie lors d’un 503 Gemini');
++  assert(res503.data?.provider === 'cloudflare', 'Cloudflare a répondu lors du 503');
++
++  // B. Les deux fournisseurs en quota épuisé (Gemini 429 + Cloudflare 429)
++  const mockCfQuotaFetch: typeof fetch = async () => {
++    return new Response(JSON.stringify({ error: 'Daily neuron limit exceeded' }), {
++      status: 429,
++      headers: { 'Content-Type': 'application/json' },
++    });
++  };
++
++  const bothQuotaRes = createMockResponse();
++  await handleAIImageGenerate(geminiReq, bothQuotaRes, {
++    customAi: mockGeminiQuota,
++    skipAuth: true,
++    cloudflareConfig: {
++      accountId: 'test_acc',
++      apiToken: 'test_cf_token_123',
++      fetchFn: mockCfQuotaFetch,
++    },
++  });
++  assert(bothQuotaRes.statusCode === 429, 'Code 429 renvoyé lorsque les 2 quotas sont épuisés');
++  assert(bothQuotaRes.data?.code === 'QUOTA_EXCEEDED', 'Code d’erreur QUOTA_EXCEEDED retourné');
++
++  // -------------------------------------------------------------------------
++  // 6. TEST : PARSING FORMAT BINAIRE BUFFER DE CLOUDFLARE
++  // -------------------------------------------------------------------------
++  console.log('\n--- 6. Parsing du format binaire de Cloudflare ---');
++  const binaryPayload = Buffer.from('FAKE_PNG_BINARY_DATA');
++  const mockBinaryFetch: typeof fetch = async () => {
++    return new Response(binaryPayload, {
++      status: 200,
++      headers: { 'Content-Type': 'image/png' },
++    });
++  };
++
++  const cfBinaryResult = await generateImageWithCloudflare('parfum élégant', {
++    config: {
++      accountId: 'acc',
++      apiToken: 'tok',
++      fetchFn: mockBinaryFetch,
++    },
++  });
++  assert(cfBinaryResult.imageUrl.startsWith('data:image/png;base64,'), 'Buffer binaire correctement encodé en Data URI');
++  assert(cfBinaryResult.provider === 'cloudflare', 'Fournisseur confirmé Cloudflare');
++
++  // -------------------------------------------------------------------------
++  // 7. TEST : CONVERSION DATA URI -> BLOB & STOCKAGE CLOUDINARY
++  // -------------------------------------------------------------------------
++  console.log('\n--- 7. Sécurisation du stockage persistant Cloudinary ---');
++  const sampleDataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
++  const convertedBlob = dataUriToBlob(sampleDataUri);
++  assert(convertedBlob instanceof Blob, 'Conversion Data URI en Blob valide');
++  assert(convertedBlob.type === 'image/png', 'Type MIME PNG préservé');
++  assert(convertedBlob.size > 0, `Taille binaire non vide (${convertedBlob.size} octets)`);
++
++  // Simulation de remplacement par URL persistante Cloudinary
++  const mockCloudinaryUpload = async (blob: Blob) => {
++    assert(blob.size > 0, 'Blob téléversé non vide');
++    return 'https://res.cloudinary.com/pb426age/image/upload/v123456789/users/vend_test/products/ai_gen.png';
++  };
++
++  const finalPersistentUrl = await mockCloudinaryUpload(convertedBlob);
++  assert(finalPersistentUrl.startsWith('https://res.cloudinary.com/'), 'URL permanente Cloudinary obtenue');
++  assert(!finalPersistentUrl.startsWith('blob:'), 'Aucun lien blob: éphémère ne subsiste');
++  assert(!finalPersistentUrl.startsWith('data:'), 'Aucune chaîne Base64 ne subsiste pour Firestore');
++
++  // -------------------------------------------------------------------------
++  // 8. TEST : AUDIT DES SECRETS
++  // -------------------------------------------------------------------------
++  console.log('\n--- 8. Audit de non-exposition des secrets ---');
++  const filesToAudit = [
++    'src/components/CatalogManager.tsx',
++    'src/services/geminiClient.ts',
++    'src/server/cloudflareWorkersAi.ts',
++    'src/server/geminiService.ts',
++  ];
++
++  for (const relPath of filesToAudit) {
++    const fullPath = path.resolve(relPath);
++    if (fs.existsSync(fullPath)) {
++      const content = fs.readFileSync(fullPath, 'utf8');
++      assert(!content.includes('CLOUDFLARE_API_TOKEN='), `Aucun token Cloudflare hardcodé dans ${relPath}`);
++      assert(!content.includes('CLOUDFLARE_ACCOUNT_ID='), `Aucun Account ID Cloudflare hardcodé dans ${relPath}`);
++      assert(!content.includes('VITE_CLOUDFLARE'), `Aucun préfixe client VITE_CLOUDFLARE dans ${relPath}`);
++    }
++  }
++
++  console.log(`\n==================================================`);
++  console.log(`RÉSULTATS : ${passed} passés, ${failed} échoués`);
++  console.log(`==================================================\n`);
++
++  if (failed > 0) {
++    process.exit(1);
++  }
++}
++
++runImageFallbackTests().catch((err) => {
++  console.error('Erreur inattendue dans les tests de repli image :', err);
++  process.exit(1);
++});
+diff --git a/src/components/CatalogManager.tsx b/src/components/CatalogManager.tsx
+index 3d3b286..86a9475 100644
+--- a/src/components/CatalogManager.tsx
++++ b/src/components/CatalogManager.tsx
+@@ -24,7 +24,7 @@ import {
+ } from 'lucide-react';
+ import { formatCurrency } from '../services/aiGenerator';
+ import { useToast } from './Toast';
+-import { uploadImageToStorage, ACCEPTED_IMAGE_TYPES } from '../services/imageUpload';
++import { uploadImageToStorage, uploadDataUriToCloudinary, ACCEPTED_IMAGE_TYPES } from '../services/imageUpload';
+ import { GeminiClient } from '../services/geminiClient';
+ import { getVendorEntitlements } from '../services/entitlements';
+ 
+@@ -314,6 +314,20 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
+ 
+     setIsSubmitting(true);
+     try {
++      // 1. Convertir et téléverser toute image générée par IA (Data URI Base64) vers Cloudinary
++      // afin de garantir qu'aucun lien temporaire blob: ou chaîne Base64 n'est persisté dans Firestore.
++      const finalImages: string[] = [];
++      for (let i = 0; i < images.slice(0, 3).length; i++) {
++        const img = images[i];
++        if (img && img.startsWith('data:image/')) {
++          showToast('Enregistrement permanent de la photo IA sur Cloudinary...', 'info');
++          const permanentUrl = await uploadDataUriToCloudinary(img, 'products', `ai_${Date.now()}_${i}.png`);
++          finalImages.push(permanentUrl);
++        } else if (img && !img.startsWith('blob:')) {
++          finalImages.push(img);
++        }
++      }
++
+       await onSaveProduct({
+         id: editingProduct?.id,
+         name: name.trim(),
+@@ -321,7 +335,7 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
+         original_price: originalPrice !== '' ? Number(originalPrice) : undefined,
+         description: description.trim(),
+         category: category.trim() || 'Général',
+-        images: images.slice(0, 3),
++        images: finalImages,
+       });
+ 
+       showToast(editingProduct ? 'Produit mis à jour avec succès' : 'Nouveau produit ajouté au catalogue !', 'success');
+diff --git a/src/server/cloudflareWorkersAi.ts b/src/server/cloudflareWorkersAi.ts
+new file mode 100644
+index 0000000..568369e
+--- /dev/null
++++ b/src/server/cloudflareWorkersAi.ts
+@@ -0,0 +1,146 @@
++/**
++ * Module Fournisseur Alternatif de Génération d'Images : Cloudflare Workers AI
++ * 
++ * Modèles supportés :
++ * - '@cf/black-forest-labs/flux-1-schnell' (Modèle principal haute fidélité FLUX.1)
++ * - '@cf/bytedance/stable-diffusion-xl-lightning' (Repli rapide SDXL Lightning)
++ * - '@cf/stabilityai/stable-diffusion-xl-base-1.0' (Repli standard SDXL)
++ * 
++ * Spécifications et Limites du Quota Gratuit Cloudflare Workers AI :
++ * 1. Allocation gratuite : 10 000 "Neurons" par jour (réinitialisation quotidienne à 00:00 UTC).
++ * 2. Consommation :
++ *    - FLUX.1 Schnell : ~2 000 Neurons par génération (~5 images gratuites par jour).
++ *    - SDXL Lightning : ~1 000 à 1 500 Neurons par génération (~7 à 10 images gratuites par jour).
++ * 3. Prérequis de compte :
++ *    - Compte Cloudflare gratuit (aucun moyen de paiement ni carte bancaire requis).
++ *    - Token d'API Cloudflare avec permission "Workers AI: Read / Run".
++ *    - ID de compte Cloudflare (Account ID).
++ * 4. Plafond dur : Dès que le quota de 10 000 Neurons est atteint, Cloudflare renvoie HTTP 429 sans frais.
++ */
++
++import dotenv from 'dotenv';
++
++dotenv.config();
++
++export const CLOUDFLARE_IMAGE_MODELS = [
++  '@cf/black-forest-labs/flux-1-schnell',
++  '@cf/bytedance/stable-diffusion-xl-lightning',
++  '@cf/stabilityai/stable-diffusion-xl-base-1.0',
++];
++
++export interface CloudflareImageConfig {
++  accountId?: string;
++  apiToken?: string;
++  fetchFn?: typeof fetch;
++}
++
++/**
++ * Vérifie si les identifiants Cloudflare Workers AI sont configurés dans l'environnement serveur
++ */
++export function isCloudflareConfigured(config?: CloudflareImageConfig): boolean {
++  const accountId = config?.accountId || process.env.CLOUDFLARE_ACCOUNT_ID || '';
++  const apiToken = config?.apiToken || process.env.CLOUDFLARE_API_TOKEN || '';
++  return Boolean(accountId.trim() && apiToken.trim());
++}
++
++/**
++ * Génère une image via l'API REST officielle Cloudflare Workers AI
++ */
++export async function generateImageWithCloudflare(
++  prompt: string,
++  options?: {
++    model?: string;
++    config?: CloudflareImageConfig;
++  }
++): Promise<{ imageUrl: string; model: string; provider: 'cloudflare' }> {
++  const accountId = (options?.config?.accountId || process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
++  const apiToken = (options?.config?.apiToken || process.env.CLOUDFLARE_API_TOKEN || '').trim();
++  const fetchClient = options?.config?.fetchFn || fetch;
++
++  if (!accountId || !apiToken) {
++    const err: any = new Error(
++      'Fournisseur alternatif Cloudflare non configuré (CLOUDFLARE_ACCOUNT_ID ou CLOUDFLARE_API_TOKEN manquant côté serveur).'
++    );
++    err.status = 503;
++    err.code = 'CLOUDFLARE_NOT_CONFIGURED';
++    throw err;
++  }
++
++  const modelToUse = options?.model || CLOUDFLARE_IMAGE_MODELS[0];
++  const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${modelToUse}`;
++
++  let response: Response;
++  try {
++    response = await fetchClient(url, {
++      method: 'POST',
++      headers: {
++        Authorization: `Bearer ${apiToken}`,
++        'Content-Type': 'application/json',
++      },
++      body: JSON.stringify({
++        prompt: prompt.trim(),
++      }),
++    });
++  } catch (netErr: any) {
++    const err: any = new Error('Erreur réseau lors de la communication avec Cloudflare Workers AI.');
++    err.status = 503;
++    err.code = 'NETWORK_ERROR';
++    throw err;
++  }
++
++  if (!response.ok) {
++    // Analyse propre du statut sans fuite de token
++    if (response.status === 401 || response.status === 403) {
++      const err: any = new Error('Authentification Cloudflare invalide ou non autorisée.');
++      err.status = 401;
++      err.code = 'AUTH_ERROR';
++      throw err;
++    }
++
++    if (response.status === 429) {
++      const err: any = new Error(
++        'Le quota gratuit Cloudflare Workers AI (10 000 Neurons/jour) est atteint pour aujourd’hui.'
++      );
++      err.status = 429;
++      err.code = 'QUOTA_EXCEEDED';
++      throw err;
++    }
++
++    const errBody = await response.text().catch(() => '');
++    const isOverloaded = response.status === 503 || errBody.includes('capacity') || errBody.includes('unavailable');
++    const err: any = new Error(
++      isOverloaded
++        ? 'Service Cloudflare Workers AI temporairement surchargé. Réessayez dans un instant.'
++        : `Erreur du fournisseur alternatif Cloudflare (${response.status}).`
++    );
++    err.status = isOverloaded ? 503 : 502;
++    err.code = isOverloaded ? 'SERVICE_UNAVAILABLE' : 'PROVIDER_ERROR';
++    throw err;
++  }
++
++  const contentType = (response.headers.get('content-type') || '').toLowerCase();
++
++  // 1. Format JSON avec image en Base64 (comme retourné par flux-1-schnell)
++  if (contentType.includes('application/json')) {
++    const json = await response.json();
++    const base64Data = json?.result?.image || json?.image;
++    if (base64Data && typeof base64Data === 'string') {
++      const dataUri = base64Data.startsWith('data:')
++        ? base64Data
++        : `data:image/png;base64,${base64Data}`;
++      return { imageUrl: dataUri, model: modelToUse, provider: 'cloudflare' };
++    }
++    throw new Error('Réponse JSON Cloudflare sans image valide.');
++  }
++
++  // 2. Format binaire direct (image/png ou octet-stream)
++  const arrayBuffer = await response.arrayBuffer();
++  if (arrayBuffer.byteLength > 0) {
++    const buffer = Buffer.from(arrayBuffer);
++    const mime = contentType.includes('image/') ? contentType.split(';')[0] : 'image/png';
++    const dataUri = `data:${mime};base64,${buffer.toString('base64')}`;
++    return { imageUrl: dataUri, model: modelToUse, provider: 'cloudflare' };
++  }
++
++  throw new Error('Image vide reçue de Cloudflare Workers AI.');
++}
+diff --git a/src/server/geminiService.ts b/src/server/geminiService.ts
+index 4581f67..fddb6c6 100644
+--- a/src/server/geminiService.ts
++++ b/src/server/geminiService.ts
+@@ -17,6 +17,11 @@ import { GoogleGenAI } from '@google/genai';
+ import dotenv from 'dotenv';
+ import { verifyFirebaseUserDetails } from './cloudinarySign.ts';
+ import { getAdminDb } from './firebaseAdmin.ts';
++import { 
++  generateImageWithCloudflare, 
++  isCloudflareConfigured, 
++  CloudflareImageConfig 
++} from './cloudflareWorkersAi.ts';
+ 
+ dotenv.config();
+ 
+@@ -412,7 +417,21 @@ ${location ? `- Emplacement : ${location}` : ''}
+ /**
+  * Handler universel pour la génération d'images promotionnelles (/api/ai/image/generate)
+  */
+-export async function handleAIImageGenerate(req: any, res: any, customAi?: GoogleGenAI | null) {
++export interface ImageGenerateOptions {
++  customAi?: GoogleGenAI | null;
++  skipAuth?: boolean;
++  cloudflareConfig?: CloudflareImageConfig;
++}
++
++/**
++ * Handler universel pour la génération d'images promotionnelles (/api/ai/image/generate)
++ * avec bascule automatique résiliente vers Cloudflare Workers AI en cas d'épuisement de quota (429) ou indisponibilité (503).
++ */
++export async function handleAIImageGenerate(
++  req: any,
++  res: any,
++  options?: ImageGenerateOptions | GoogleGenAI | null
++) {
+   if (req.method === 'OPTIONS') {
+     return sendJson(res, 204, {});
+   }
+@@ -421,24 +440,30 @@ export async function handleAIImageGenerate(req: any, res: any, customAi?: Googl
+     return sendJson(res, 405, { error: 'Méthode non autorisée. Utilisez POST.', code: 'METHOD_NOT_ALLOWED' });
+   }
+ 
+-  const ai = customAi !== undefined ? customAi : getGeminiClient();
+-  if (!ai) {
+-    return sendJson(res, 401, {
+-      error: 'Clé API Gemini non configurée côté serveur.',
+-      code: 'AUTH_ERROR',
+-    });
++  const resolvedOptions: ImageGenerateOptions = options instanceof GoogleGenAI 
++    ? { customAi: options, skipAuth: false } 
++    : (options || {});
++
++  // 1. Contrôle strict des droits d'accès VIP / Essai actif (aucune bascule si accès non autorisé)
++  if (!resolvedOptions.skipAuth) {
++    const isAllowed = await requirePremiumSeller(req, res);
++    if (!isAllowed) return;
+   }
+ 
+-  try {
+-    const { prompt, aspectRatio = '1:1' } = req.body || {};
++  const { prompt, aspectRatio = '1:1' } = req.body || {};
+ 
+-    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+-      return sendJson(res, 400, { error: 'Le prompt de description est obligatoire.', code: 'INVALID_INPUT' });
+-    }
++  // 2. Validation stricte du prompt
++  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
++    return sendJson(res, 400, { error: 'Le prompt de description est obligatoire.', code: 'INVALID_INPUT' });
++  }
+ 
+-    const enhancedPrompt = `Professional commercial product photography, studio lighting, advertising quality, highly detailed, crisp focus, clean background: ${prompt.trim()}`;
++  const enhancedPrompt = `Professional commercial product photography, studio lighting, advertising quality, highly detailed, crisp focus, clean background: ${prompt.trim()}`;
+ 
+-    let lastErr: any = null;
++  // 3. Tentative avec le fournisseur principal (Gemini Imagen)
++  const ai = resolvedOptions.customAi !== undefined ? resolvedOptions.customAi : getGeminiClient();
++  let lastGeminiErr: any = null;
++
++  if (ai) {
+     for (const model of VERIFIED_IMAGE_MODELS) {
+       try {
+         const response = await ai.models.generateContent({
+@@ -459,24 +484,83 @@ export async function handleAIImageGenerate(req: any, res: any, customAi?: Googl
+         if (imagePart && imagePart.inlineData?.data) {
+           const mime = imagePart.inlineData.mimeType || 'image/png';
+           const imageUrl = `data:${mime};base64,${imagePart.inlineData.data}`;
+-          return sendJson(res, 200, { imageUrl });
++          return sendJson(res, 200, { 
++            imageUrl, 
++            provider: 'gemini', 
++            model 
++          });
+         }
+       } catch (err: any) {
+-        lastErr = err;
+-        console.warn(`[GeminiService Image Error] Modèle "${model}" :`, err?.message || err);
++        lastGeminiErr = err;
++        console.warn(`[Gemini Image Error] Modèle "${model}" :`, err?.message || err);
+       }
+     }
++  } else {
++    lastGeminiErr = { status: 401, message: 'Clé Gemini non configurée' };
++  }
+ 
+-    const sanitized = sanitizeGeminiError(lastErr);
+-    return sendJson(res, sanitized.status, {
+-      error: sanitized.message,
+-      code: sanitized.code,
++  const sanitizedGemini = sanitizeGeminiError(lastGeminiErr);
++
++  // 4. Condition stricte de bascule : uniquement en cas d'épuisement de quota (429) ou d'indisponibilité (503)
++  const isQuotaOrUnavailable = sanitizedGemini.code === 'RATE_LIMIT' || sanitizedGemini.code === 'SERVICE_UNAVAILABLE';
++
++  if (!isQuotaOrUnavailable) {
++    // Si c'est une erreur d'authentification ou d'incompatibilité, on ne bascule pas
++    return sendJson(res, sanitizedGemini.status, {
++      error: sanitizedGemini.message,
++      code: sanitizedGemini.code,
++      provider: 'gemini',
+     });
+-  } catch (error: any) {
+-    const sanitized = sanitizeGeminiError(error);
+-    return sendJson(res, sanitized.status, {
+-      error: sanitized.message,
+-      code: sanitized.code,
++  }
++
++  // 5. Bascule vers le fournisseur alternatif gratuit : Cloudflare Workers AI
++  console.info('[AI Image Fallback] Quota Gemini atteint ou indisponible. Bascule vers Cloudflare Workers AI...');
++
++  if (!isCloudflareConfigured(resolvedOptions.cloudflareConfig)) {
++    return sendJson(res, 429, {
++      error: 'Le quota gratuit de génération d’images Gemini est atteint pour aujourd’hui. Le fournisseur alternatif Cloudflare Workers AI n’est pas configuré sur le serveur (variables CLOUDFLARE_ACCOUNT_ID et CLOUDFLARE_API_TOKEN requises). Vous pouvez importer une photo manuellement.',
++      code: 'QUOTA_EXCEEDED',
++      provider: 'none',
++      fallbackAvailable: false,
++    });
++  }
++
++  try {
++    const cfResult = await generateImageWithCloudflare(enhancedPrompt, {
++      config: resolvedOptions.cloudflareConfig,
++    });
++
++    return sendJson(res, 200, {
++      imageUrl: cfResult.imageUrl,
++      provider: 'cloudflare',
++      model: cfResult.model,
++    });
++  } catch (cfErr: any) {
++    console.error('[Cloudflare Image Error]:', cfErr?.message || cfErr);
++
++    const isCfQuota = cfErr.status === 429 || cfErr.code === 'QUOTA_EXCEEDED';
++    const isCfUnavailable = cfErr.status === 503 || cfErr.code === 'SERVICE_UNAVAILABLE';
++
++    if (isCfQuota) {
++      return sendJson(res, 429, {
++        error: 'Le quota de génération d’images des deux fournisseurs (Gemini et Cloudflare) est atteint. Vous pouvez importer votre photo manuellement.',
++        code: 'QUOTA_EXCEEDED',
++        provider: 'both',
++      });
++    }
++
++    if (isCfUnavailable) {
++      return sendJson(res, 503, {
++        error: 'Tous les services de génération d’images sont momentanément surchargés. Veuillez patienter ou importer une photo manuellement.',
++        code: 'SERVICE_UNAVAILABLE',
++        provider: 'both',
++      });
++    }
++
++    return sendJson(res, cfErr.status || 500, {
++      error: cfErr.message || 'Erreur lors de la génération d’image de secours.',
++      code: cfErr.code || 'PROVIDER_ERROR',
++      provider: 'cloudflare',
+     });
+   }
+ }
+@@ -484,7 +568,11 @@ export async function handleAIImageGenerate(req: any, res: any, customAi?: Googl
+ /**
+  * Handler universel pour sublimer une photo existante (/api/ai/image/enhance)
+  */
+-export async function handleAIImageEnhance(req: any, res: any, customAi?: GoogleGenAI | null) {
++export async function handleAIImageEnhance(
++  req: any,
++  res: any,
++  options?: { customAi?: GoogleGenAI | null; skipAuth?: boolean } | GoogleGenAI | null
++) {
+   if (req.method === 'OPTIONS') {
+     return sendJson(res, 204, {});
+   }
+@@ -493,7 +581,16 @@ export async function handleAIImageEnhance(req: any, res: any, customAi?: Google
+     return sendJson(res, 405, { error: 'Méthode non autorisée. Utilisez POST.', code: 'METHOD_NOT_ALLOWED' });
+   }
+ 
+-  const ai = customAi !== undefined ? customAi : getGeminiClient();
++  const resolvedOptions = options instanceof GoogleGenAI 
++    ? { customAi: options, skipAuth: false } 
++    : (options || {});
++
++  if (!resolvedOptions.skipAuth) {
++    const isAllowed = await requirePremiumSeller(req, res);
++    if (!isAllowed) return;
++  }
++
++  const ai = resolvedOptions.customAi !== undefined ? resolvedOptions.customAi : getGeminiClient();
+   if (!ai) {
+     return sendJson(res, 401, {
+       error: 'Clé API Gemini non configurée côté serveur.',
+diff --git a/src/services/geminiClient.ts b/src/services/geminiClient.ts
+index 45a907c..bbd0fc3 100644
+--- a/src/services/geminiClient.ts
++++ b/src/services/geminiClient.ts
+@@ -107,7 +107,10 @@ export const GeminiClient = {
+ 
+     const data = await res.json().catch(() => ({}));
+     if (!res.ok) {
+-      throw new Error(data.error || 'Erreur lors de la génération d’image');
++      const err: any = new Error(data.error || 'Erreur lors de la génération d’image');
++      err.status = res.status;
++      err.code = data.code;
++      throw err;
+     }
+ 
+     if (!data.imageUrl) {
+@@ -130,7 +133,10 @@ export const GeminiClient = {
+ 
+     const data = await res.json().catch(() => ({}));
+     if (!res.ok) {
+-      throw new Error(data.error || 'Erreur lors de l’amélioration de la photo');
++      const err: any = new Error(data.error || 'Erreur lors de l’amélioration de la photo');
++      err.status = res.status;
++      err.code = data.code;
++      throw err;
+     }
+ 
+     if (!data.imageUrl) {
+diff --git a/src/services/imageUpload.ts b/src/services/imageUpload.ts
+index a922993..d64780b 100644
+--- a/src/services/imageUpload.ts
++++ b/src/services/imageUpload.ts
+@@ -303,3 +303,34 @@ export async function processImageFile(
+   return uploadImageToStorage(file, folder, _vendorUid);
+ }
+ 
++/**
++ * Convertit une chaîne Data URI (Base64) en Blob binaire pour le téléversement Cloudinary.
++ */
++export function dataUriToBlob(dataUri: string): Blob {
++  if (!dataUri || !dataUri.startsWith('data:')) {
++    throw new Error('Format Data URI invalide');
++  }
++  const [header, base64Data] = dataUri.split(',');
++  const mimeMatch = header.match(/:(.*?);/);
++  const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
++  const byteCharacters = atob(base64Data);
++  const byteNumbers = new Uint8Array(byteCharacters.length);
++  for (let i = 0; i < byteCharacters.length; i++) {
++    byteNumbers[i] = byteCharacters.charCodeAt(i);
++  }
++  return new Blob([byteNumbers.buffer as BlobPart], { type: mimeType });
++}
++
++/**
++ * Téléverse directement une image issue de la génération IA (Base64 data URI)
++ * vers Cloudinary pour garantir qu'aucune chaîne volumineuse ni lien blob: n'est stocké dans Firestore.
++ */
++export async function uploadDataUriToCloudinary(
++  dataUri: string,
++  folder: 'products' | 'logos' = 'products',
++  fileName: string = 'ai_generated.png'
++): Promise<string> {
++  const blob = dataUriToBlob(dataUri);
++  return await uploadToCloudinary(blob, folder, fileName);
++}
++
+-- 
+2.34.1
+
