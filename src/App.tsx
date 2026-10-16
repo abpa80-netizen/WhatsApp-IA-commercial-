@@ -236,7 +236,7 @@ function MainApp() {
             const prods = await ApiService.getCatalog(publicStore.id);
             if (isSubscribed) {
               setPublicStoreProducts(prods);
-              ApiService.trackView(publicStore.id);
+              // PublicStore owns the session-guarded shop-view event; do not count it twice here.
             }
           } else {
             setPublicStoreVendeur(null);
