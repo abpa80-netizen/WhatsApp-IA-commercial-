@@ -820,56 +820,7 @@ export const FirestoreService = {
       console.warn('[FirestoreService] Telemetry query fallback:', err);
     }
 
-    // If total views exist in seller profile but analytics events collection is empty or partial
-    const totalProfileViews = Number(vendeur.views || 0);
-    const totalEventsViews = Object.values(dailyMap).reduce((s, d) => s + d.views, 0);
-
-    if (totalProfileViews > 0 && totalEventsViews === 0) {
-      // Natural distribution curve reflecting recent daily activity
-      const weights = dateKeys.map((_, idx) => Math.pow((idx + 1) / days, 1.25));
-      const totalWeight = weights.reduce((a, b) => a + b, 0);
-      let allocated = 0;
-
-      dateKeys.forEach((key, idx) => {
-        if (idx === dateKeys.length - 1) {
-          dailyMap[key].views = Math.max(0, totalProfileViews - allocated);
-        } else {
-          const count = Math.round((weights[idx] / totalWeight) * totalProfileViews);
-          dailyMap[key].views = count;
-          allocated += count;
-        }
-      });
-
-      // Distribute product clicks & conversions proportionally
-      const totalProfileClicks = Number(vendeur.product_clicks || 0);
-      const totalProfileConversions = Number(vendeur.conversions || 0);
-
-      if (totalProfileClicks > 0) {
-        let allocClicks = 0;
-        dateKeys.forEach((key, idx) => {
-          if (idx === dateKeys.length - 1) {
-            dailyMap[key].clicks = Math.max(0, totalProfileClicks - allocClicks);
-          } else {
-            const count = Math.round((dailyMap[key].views / Math.max(1, totalProfileViews)) * totalProfileClicks);
-            dailyMap[key].clicks = count;
-            allocClicks += count;
-          }
-        });
-      }
-
-      if (totalProfileConversions > 0) {
-        let allocConv = 0;
-        dateKeys.forEach((key, idx) => {
-          if (idx === dateKeys.length - 1) {
-            dailyMap[key].conversions = Math.max(0, totalProfileConversions - allocConv);
-          } else {
-            const count = Math.round((dailyMap[key].views / Math.max(1, totalProfileViews)) * totalProfileConversions);
-            dailyMap[key].conversions = count;
-            allocConv += count;
-          }
-        });
-      }
-    }
+    // Only show recorded events. Never invent historical daily distributions.
 
     return dateKeys.map(key => {
       const parts = key.split('-');
