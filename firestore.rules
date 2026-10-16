@@ -57,6 +57,8 @@ service cloud.firestore {
          (!('hasFullCatalog' in resource.data) || request.resource.data.hasFullCatalog != resource.data.hasFullCatalog)) ||
         ('is_active' in request.resource.data &&
          (!('is_active' in resource.data) || request.resource.data.is_active != resource.data.is_active)) ||
+        ('isVipActive' in request.resource.data &&
+         (!('isVipActive' in resource.data) || request.resource.data.isVipActive != resource.data.isVipActive)) ||
         ('role' in request.resource.data) ||
         ('status' in request.resource.data) ||
         ('plan' in request.resource.data) ||
@@ -138,6 +140,7 @@ service cloud.firestore {
             isVendorActive(uid) &&
             (!('hasFullCatalog' in request.resource.data) || request.resource.data.hasFullCatalog == false) &&
             (!('is_active' in request.resource.data) || request.resource.data.is_active == true) &&
+            (!('isVipActive' in request.resource.data) || request.resource.data.isVipActive == false) &&
             !('role' in request.resource.data) &&
             !('status' in request.resource.data) &&
             !('plan' in request.resource.data) &&

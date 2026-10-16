@@ -117,8 +117,9 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
 
   // Verified VIP status: strictly checked via single source of truth (rejects expired subscriptions)
   const isVipStore = React.useMemo(() => {
-    const ent = getVendorEntitlements(vendeur as any);
-    return ent.isVipActive;
+    // Public customer profiles expose only this safe boolean, not private subscription fields.
+    if ('isVipActive' in vendeur) return vendeur.isVipActive === true;
+    return getVendorEntitlements(vendeur as any).isVipActive;
   }, [vendeur]);
 
   // Search and category filtering

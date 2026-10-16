@@ -138,9 +138,10 @@ function evaluateFirestoreRule(params: {
       const noStatus = !('status' in incomingData!);
       const noPlan = !('plan' in incomingData!);
       const noVip = !('vipEndsAt' in incomingData!) && !('vipStartedAt' in incomingData!);
+      const noVipBadge = !('isVipActive' in incomingData!) || incomingData!.isVipActive === false;
       const noTrial = !('trialEndsAt' in incomingData!) && !('trialStartedAt' in incomingData!);
 
-      const allowed = noRole && noStatus && noPlan && noVip && noTrial;
+      const allowed = noRole && noStatus && noPlan && noVip && noVipBadge && noTrial;
       return { allowed, reason: allowed ? 'Création vitrine publique autorisée' : 'Champs d’abonnement ou de statut interdits sur /publicStores' };
     }
     if (operation === 'update') {
@@ -159,6 +160,13 @@ function evaluateFirestoreRule(params: {
       if ('is_active' in incomingData!) {
         if (!existingData || !('is_active' in existingData) || incomingData.is_active !== existingData.is_active) {
           return { allowed: false, reason: 'Un vendeur ne peut pas modifier is_active' };
+        }
+      }
+
+      // Le badge VIP public est un booléen sûr, mais seul l'admin peut le changer.
+      if ('isVipActive' in incomingData!) {
+        if (!existingData || !('isVipActive' in existingData) || incomingData.isVipActive !== existingData.isVipActive) {
+          return { allowed: false, reason: 'Un vendeur ne peut pas modifier isVipActive' };
         }
       }
 

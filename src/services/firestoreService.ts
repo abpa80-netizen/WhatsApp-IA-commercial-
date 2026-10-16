@@ -272,6 +272,7 @@ export const FirestoreService = {
         currency: (d?.currency as CurrencyType) || 'MAD',
         is_active: false,
         hasFullCatalog: false,
+        isVipActive: false,
         publicSlug: uid,
         orderWhatsApp: undefined,
         allowCommercialContact: false,
@@ -282,14 +283,21 @@ export const FirestoreService = {
     // Determine if full catalog is allowed or restricted to 4 products without exposing internal dates or plans.
     // Suspended or inactive accounts are strictly deactivated (is_active: false, hasFullCatalog: false).
     const isSuspended = d.status === 'Inactif' || d.status === 'Suspendu' || d.is_active === false;
+    const vipEnd = normalizeStoredDate(d.vipEndsAt);
+    const hasPrivateSubscriptionFields = ('status' in d) || ('plan' in d);
+    const isVipActive = !isSuspended && (
+      hasPrivateSubscriptionFields
+        ? (d.status === 'VIP' || d.plan === 'VIP') && (!vipEnd || new Date(vipEnd).getTime() > Date.now())
+        : d.isVipActive === true
+    );
     const isVip = (d.status === 'VIP' || d.plan === 'VIP') && !isSuspended;
     let fullCatalog = false;
 
     if (isSuspended) {
       fullCatalog = false;
     } else if (isVip) {
-      const vipEnd = d.vipEndsAt;
-      fullCatalog = !vipEnd || new Date(vipEnd).getTime() > Date.now();
+      // Reuse the normalized active-VIP decision so Firestore Timestamp and ISO dates behave consistently.
+      fullCatalog = isVipActive;
     } else if (d.plan === 'Gratuit' || d.status === 'Gratuit') {
       fullCatalog = false;
     } else if (d.trialStartedAt || d.createdAt || d.created_at || d.trialEndsAt || d.date_expiration_essai) {
@@ -341,6 +349,7 @@ export const FirestoreService = {
       currency: (d.currency as CurrencyType) || 'MAD',
       is_active: !isSuspended && d.is_active !== false,
       hasFullCatalog: fullCatalog,
+      isVipActive,
       publicSlug: d.publicSlug || uid,
       orderWhatsApp: orderContact,
       allowCommercialContact: Boolean(orderContact),
@@ -395,6 +404,7 @@ export const FirestoreService = {
         currency: sanitized.currency,
         is_active: sanitized.is_active ?? true,
         hasFullCatalog: sanitized.hasFullCatalog ?? false,
+        isVipActive: sanitized.isVipActive ?? false,
         publicSlug: sanitized.publicSlug,
         orderWhatsApp: sanitized.orderWhatsApp || null,
         allowCommercialContact: Boolean(sanitized.allowCommercialContact),
@@ -570,7 +580,8 @@ export const FirestoreService = {
 
           if (!storeSnap.exists() ||
               storeSnap.data().hasFullCatalog !== sanitized.hasFullCatalog ||
-              storeSnap.data().is_active !== sanitized.is_active) {
+              storeSnap.data().is_active !== sanitized.is_active ||
+              storeSnap.data().isVipActive !== sanitized.isVipActive) {
             await setDoc(storeRef, {
               id: d.id,
               name: sanitized.name,
@@ -580,6 +591,7 @@ export const FirestoreService = {
               currency: sanitized.currency,
               is_active: sanitized.is_active,
               hasFullCatalog: sanitized.hasFullCatalog,
+              isVipActive: sanitized.isVipActive ?? false,
               publicSlug: sanitized.publicSlug,
               orderWhatsApp: sanitized.orderWhatsApp || null,
               allowCommercialContact: Boolean(sanitized.allowCommercialContact),
@@ -778,6 +790,7 @@ export const FirestoreService = {
         vendeur_id: event.vendeur_id,
         type: event.type,
         productId: event.productId || null,
+        source: 'public_store_v1',
         timestamp: new Date().toISOString(),
       });
     } catch (err) {
@@ -802,12 +815,13 @@ export const FirestoreService = {
       if (cleanId) {
         const q = query(
           collection(db, 'analytics'),
-          where('vendeur_id', '==', cleanId),
-          limit(300)
+          where('vendeur_id', '==', cleanId)
         );
         const snap = await getDocs(q);
         snap.forEach(docSnap => {
           const ev = docSnap.data();
+          // Ignore legacy/demo telemetry created before source-tagged real tracking.
+          if (ev.source !== 'public_store_v1') return;
           const evDate = (ev.timestamp || '').slice(0, 10);
           if (dailyMap[evDate]) {
             if (ev.type === 'view') dailyMap[evDate].views++;
