@@ -145,10 +145,10 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
         const prodSessionKey = `wca_viewed_prod_${vendeur.id}_${product.id}`;
         if (!sessionStorage.getItem(prodSessionKey)) {
           sessionStorage.setItem(prodSessionKey, String(Date.now()));
-          ApiService.trackView(vendeur.id, product.id);
+          ApiService.trackProductClick(vendeur.id, product.id);
         }
       } catch {
-        ApiService.trackView(vendeur.id, product.id);
+        ApiService.trackProductClick(vendeur.id, product.id);
       }
     }
   };
@@ -163,6 +163,14 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
       setSelectedProduct(requestedProduct);
       setActiveImageIndex(0);
     }
+  }, [products, selectedProduct]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || selectedProduct || products.length === 0) return;
+    const requestedProductId = new URLSearchParams(window.location.search).get('product');
+    if (!requestedProductId) return;
+    const requestedProduct = products.find((product) => product.id === requestedProductId);
+    if (requestedProduct) { setSelectedProduct(requestedProduct); setActiveImageIndex(0); }
   }, [products, selectedProduct]);
 
   const handleCloseProductModal = () => {
