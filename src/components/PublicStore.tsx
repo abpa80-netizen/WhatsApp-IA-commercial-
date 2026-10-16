@@ -145,10 +145,10 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
         const prodSessionKey = `wca_viewed_prod_${vendeur.id}_${product.id}`;
         if (!sessionStorage.getItem(prodSessionKey)) {
           sessionStorage.setItem(prodSessionKey, String(Date.now()));
-          ApiService.trackView(vendeur.id, product.id);
+          ApiService.trackProductClick(vendeur.id, product.id);
         }
       } catch {
-        ApiService.trackView(vendeur.id, product.id);
+        ApiService.trackProductClick(vendeur.id, product.id);
       }
     }
   };
