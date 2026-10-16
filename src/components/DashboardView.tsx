@@ -239,68 +239,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* Premium analytics: available during trial and while VIP is active */}
       {entitlements.hasPremiumAccess ? (
         <>
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Card 1: Views */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Vues Boutique</span>
-            <div className="w-9 h-9 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center">
-              <Eye className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-extrabold text-slate-900">{totalViews}</span>
-          </div>
-          <p className="text-[11px] text-slate-400 mt-1">Visites sur votre catalogue</p>
-        </div>
-
-        {/* Card 2: Clicks */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Clics Produits</span>
-            <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
-              <MousePointerClick className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-extrabold text-slate-900">{totalClicks}</span>
-            
-          </div>
-          <p className="text-[11px] text-slate-400 mt-1">Fiches produits ouvertes</p>
-        </div>
-
-        {/* Card 3: WhatsApp Conversions */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Clics WhatsApp</span>
-            <div className="w-9 h-9 rounded-xl bg-emerald-50 text-[#25D366] flex items-center justify-center">
-              <MessageCircle className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-extrabold text-slate-900">{totalConversions}</span>
-            
-          </div>
-          <p className="text-[11px] text-slate-400 mt-1">Clics pour contacter le vendeur</p>
-        </div>
-
-        {/* Card 4: Conversion Rate */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Conversion</span>
-            <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
-              <TrendingUp className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-extrabold text-slate-900">{conversionRate}%</span>
-            
-          </div>
-          <p className="text-[11px] text-slate-400 mt-1">Taux calculé à partir des événements enregistrés</p>
-        </div>
-      </div>
-
+      {/* The detailed visit evaluation below is the single analytics view. */}
       {/* Data Visualization: Store Daily Visits Evolution (Recharts) */}
       <StoreVisitsChart vendeur={vendeur} onOpenStore={onOpenStore} />
         </>
