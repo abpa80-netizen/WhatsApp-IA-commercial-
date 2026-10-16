@@ -138,7 +138,7 @@ export const StoreVisitsChart: React.FC<StoreVisitsChartProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-base font-bold text-slate-900">Évolution des Visites de la Boutique</h3>
+              <h3 className="text-base font-bold text-slate-900">Évaluation des visites de la boutique</h3>
               <span className="hidden md:inline-flex text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/50">
                 Temps Réel
               </span>
