@@ -251,9 +251,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-2xl sm:text-3xl font-extrabold text-slate-900">{totalViews}</span>
-            <span className="text-xs font-medium text-emerald-600 flex items-center">
-              <ArrowUpRight className="w-3 h-3" /> +12%
-            </span>
           </div>
           <p className="text-[11px] text-slate-400 mt-1">Visites sur votre catalogue</p>
         </div>
@@ -268,7 +265,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-2xl sm:text-3xl font-extrabold text-slate-900">{totalClicks}</span>
-            <span className="text-xs font-medium text-amber-600">Intérêt fort</span>
+            
           </div>
           <p className="text-[11px] text-slate-400 mt-1">Fiches produits ouvertes</p>
         </div>

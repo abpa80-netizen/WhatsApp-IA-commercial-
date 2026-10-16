@@ -202,7 +202,7 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
     // Exact format required by system prompt:
     // "Bonjour [Nom Vendeur], je souhaite commander le produit '[Nom Produit]' au prix de [Prix] [Devise]. Est-il disponible ?"
     const priceFormatted = formatCurrency(product.price, vendeur.currency);
-    const textMessage = `Bonjour ${vendeur.name}, je souhaite commander le produit '${product.name}' au prix de ${priceFormatted}. Est-il disponible ?`;
+    const textMessage = `Bonjour ${vendeur.name}, je suis intéressé(e) par « ${product.name} » au prix de ${priceFormatted}. Pourriez-vous me donner plus d’informations sur sa disponibilité et les modalités de commande ?`;
 
     const encoded = encodeURIComponent(textMessage);
     const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encoded}`;
@@ -226,22 +226,6 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
     const encoded = encodeURIComponent(textMessage);
     const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encoded}`;
     window.open(whatsappUrl, '_blank');
-  };
-
-  const handleShareStore = () => {
-    const pub = vendeur as PublicStoreProfile;
-    const storeSlugOrId = pub.publicSlug || vendeur.id;
-    const storeUrl = `${window.location.origin}/v/${encodeURIComponent(storeSlugOrId)}`;
-    if (navigator.share) {
-      navigator.share({
-        title: vendeur.name,
-        text: `Découvrez la boutique en ligne de ${vendeur.name}`,
-        url: storeUrl,
-      }).catch(() => {});
-    } else {
-      navigator.clipboard.writeText(storeUrl);
-      showToast('Lien de la boutique copié !', 'success');
-    }
   };
 
   return (
@@ -478,7 +462,7 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
                     </div>
                   </div>
 
-                  {/* Actions: Voir détails & Commander */}
+                  {/* Actions: product details and seller contact */}
                   <div className="p-2.5 pt-0 grid grid-cols-2 gap-1.5">
                     <button
                       type="button"
@@ -499,11 +483,11 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
                         handleOrderWhatsApp(product);
                       }}
                       disabled={!hasPublicContact}
-                      title={hasPublicContact ? 'Commander sur WhatsApp' : 'Contact WhatsApp non configuré'}
+                      title={hasPublicContact ? 'Contacter le vendeur au sujet de ce produit' : 'Contact commercial non configuré'}
                       className="flex items-center justify-center gap-1 bg-[#25D366] hover:bg-[#20ba59] active:scale-95 disabled:bg-slate-200 disabled:text-slate-500 disabled:cursor-not-allowed text-slate-950 font-bold py-2 px-2 rounded-xl text-[11px] sm:text-xs transition-all shadow-xs cursor-pointer"
                     >
                       <MessageCircle className="w-3.5 h-3.5 fill-current shrink-0" />
-                      <span className="truncate">{hasPublicContact ? 'Commander' : 'Indisponible'}</span>
+                      <span className="truncate">{hasPublicContact ? 'Contacter le vendeur' : 'Contact indisponible'}</span>
                     </button>
                   </div>
                 </div>
@@ -525,7 +509,7 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
             </div>
             <div className="truncate">
               <div className="text-xs font-bold text-slate-900 truncate">{hasPublicContact ? 'Une question ? Un conseil ?' : 'Contact WhatsApp indisponible'}</div>
-              <div className="text-[11px] text-slate-500">{hasPublicContact ? 'Réponse rapide sur WhatsApp' : 'Le vendeur doit configurer son contact public'}</div>
+              <div className="text-[11px] text-slate-500">{hasPublicContact ? 'Échange direct avec le vendeur' : 'Le vendeur doit configurer son contact public'}</div>
             </div>
           </div>
 
@@ -536,7 +520,7 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
             className="flex items-center gap-2 bg-[#25D366] hover:bg-[#20ba59] active:scale-95 disabled:bg-slate-200 disabled:text-slate-500 disabled:cursor-not-allowed text-slate-950 font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm shadow-md shrink-0 transition-all cursor-pointer"
           >
             <MessageCircle className="w-4 h-4 fill-current" />
-            <span>{hasPublicContact ? 'Écrire à la boutique' : 'Contact indisponible'}</span>
+            <span>{hasPublicContact ? 'Poser une question' : 'Contact indisponible'}</span>
           </button>
         </div>
       </div>
@@ -649,17 +633,6 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
                   {selectedProduct.description || 'Description non renseignée.'}
                 </div>
 
-                {/* Guarantees */}
-                <div className="pt-3 border-t border-slate-100 grid grid-cols-2 gap-2 text-[11px] text-slate-500">
-                  <div className="flex items-center gap-1.5">
-                    <Check className="w-3.5 h-3.5 text-[#25D366]" />
-                    <span>Paiement à la livraison</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <Check className="w-3.5 h-3.5 text-[#25D366]" />
-                    <span>Inspection avant règlement</span>
-                  </div>
-                </div>
               </div>
             </div>
 
@@ -669,11 +642,11 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
                 id="btn-order-wa-modal"
                 onClick={() => handleOrderWhatsApp(selectedProduct)}
                 disabled={!hasPublicContact}
-                title={hasPublicContact ? 'Commander sur WhatsApp' : 'Contact WhatsApp non configuré'}
+                title={hasPublicContact ? 'Demander des informations sur ce produit' : 'Contact commercial non configuré'}
                 className="w-full flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#20ba59] active:scale-98 disabled:bg-slate-200 disabled:text-slate-500 disabled:cursor-not-allowed text-slate-950 font-bold py-3.5 px-4 rounded-xl shadow-md text-sm transition-all"
               >
                 <MessageCircle className="w-5 h-5 fill-current" />
-                <span>{hasPublicContact ? 'Commander sur WhatsApp' : 'Contact indisponible'}</span>
+                <span>{hasPublicContact ? 'Demander ce produit' : 'Contact indisponible'}</span>
               </button>
             </div>
           </div>
