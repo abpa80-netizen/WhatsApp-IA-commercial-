@@ -36,6 +36,7 @@ export const StoreVisitsChart: React.FC<StoreVisitsChartProps> = ({
   const [period, setPeriod] = useState<PeriodDays>(7);
   const [chartData, setChartData] = useState<DailyVisitStat[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showClicks, setShowClicks] = useState(true);
   const [showOrders, setShowOrders] = useState(true);
 
@@ -45,8 +46,10 @@ export const StoreVisitsChart: React.FC<StoreVisitsChartProps> = ({
     try {
       const stats = await ApiService.getDailyVisits(vendeur, period);
       setChartData(stats);
+      setLoadError(null);
     } catch (err) {
-      console.warn('[StoreVisitsChart] Erreur lors du chargement des visites:', err);
+      setLoadError('Impossible de lire les statistiques depuis Firestore. Vérifiez la connexion et les règles de sécurité, puis réessayez.');
+      console.error('[StoreVisitsChart] Erreur lors du chargement des visites:', err);
     } finally {
       if (!silent) setLoading(false);
     }
@@ -58,9 +61,13 @@ export const StoreVisitsChart: React.FC<StoreVisitsChartProps> = ({
       if (!silent) setLoading(true);
       try {
         const stats = await ApiService.getDailyVisits(vendeur, period);
-        if (!cancelled) setChartData(stats);
+        if (!cancelled) {
+          setChartData(stats);
+          setLoadError(null);
+        }
       } catch (err) {
-        console.warn('[StoreVisitsChart] Erreur lors du chargement des visites:', err);
+        if (!cancelled) setLoadError('Impossible de lire les statistiques depuis Firestore. Vérifiez la connexion et les règles de sécurité, puis réessayez.');
+        console.error('[StoreVisitsChart] Erreur lors du chargement des visites:', err);
       } finally {
         if (!cancelled && !silent) setLoading(false);
       }
@@ -178,6 +185,12 @@ export const StoreVisitsChart: React.FC<StoreVisitsChartProps> = ({
       </div>
 
       {/* KPI Highlights Bar */}
+      {loadError && (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          <strong>Statistiques indisponibles.</strong> {loadError}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {/* Metric 1: Total Period Visits */}
         <div className="bg-slate-50/80 border border-slate-200/70 rounded-2xl p-3.5 flex flex-col justify-between">

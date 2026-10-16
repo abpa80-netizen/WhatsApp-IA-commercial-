@@ -794,7 +794,9 @@ export const FirestoreService = {
         timestamp: new Date().toISOString(),
       });
     } catch (err) {
-      console.warn('Analytics logging failed:', err);
+      // Do not silently convert a failed write into a "successful" no-op.
+      console.error('[Analytics] Échec de l’enregistrement Firestore:', err);
+      throw err;
     }
   },
 
@@ -831,7 +833,8 @@ export const FirestoreService = {
         });
       }
     } catch (err) {
-      console.warn('[FirestoreService] Telemetry query fallback:', err);
+      console.error('[FirestoreService] Lecture des statistiques impossible:', err);
+      throw err;
     }
 
     // Only show recorded events. Never invent historical daily distributions.
