@@ -39,19 +39,23 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
 
-  // Track shop view on mount with session guard to prevent duplicate counts
+  // Track one shop view per browser session. Mark it only AFTER Firestore confirms the write.
+  // Previously the session was marked before the async write, so a denied/failed write was never retried.
   useEffect(() => {
-    if (!isMerchantPreview && vendeur.id) {
+    if (isMerchantPreview || !vendeur.id) return;
+    let cancelled = false;
+    const sessionKey = `wca_viewed_store_${vendeur.id}`;
+    const recordView = async () => {
       try {
-        const sessionKey = `wca_viewed_store_${vendeur.id}`;
-        if (!sessionStorage.getItem(sessionKey)) {
-          sessionStorage.setItem(sessionKey, String(Date.now()));
-          ApiService.trackView(vendeur.id);
-        }
-      } catch {
-        ApiService.trackView(vendeur.id);
+        if (sessionStorage.getItem(sessionKey)) return;
+        await ApiService.trackView(vendeur.id);
+        if (!cancelled) sessionStorage.setItem(sessionKey, String(Date.now()));
+      } catch (err) {
+        console.error('[PublicStore] La visite n’a pas été enregistrée; une prochaine ouverture pourra réessayer.', err);
       }
-    }
+    };
+    void recordView();
+    return () => { cancelled = true; };
   }, [vendeur.id, isMerchantPreview]);
 
   // Handle hardware / browser back button to close product modal
@@ -142,15 +146,16 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
     setActiveImageIndex(0);
     window.history.pushState({ modal: 'product_detail', productId: product.id }, '');
     if (!isMerchantPreview && vendeur.id && product.id) {
-      try {
-        const prodSessionKey = `wca_viewed_prod_${vendeur.id}_${product.id}`;
-        if (!sessionStorage.getItem(prodSessionKey)) {
+      const prodSessionKey = `wca_viewed_prod_${vendeur.id}_${product.id}`;
+      void (async () => {
+        try {
+          if (sessionStorage.getItem(prodSessionKey)) return;
+          await ApiService.trackProductClick(vendeur.id, product.id);
           sessionStorage.setItem(prodSessionKey, String(Date.now()));
-          ApiService.trackProductClick(vendeur.id, product.id);
+        } catch (err) {
+          console.error('[PublicStore] Le clic produit n’a pas été enregistré; une prochaine ouverture pourra réessayer.', err);
         }
-      } catch {
-        ApiService.trackProductClick(vendeur.id, product.id);
-      }
+      })();
     }
   };
 
@@ -230,7 +235,9 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
 
     // Track conversion
     if (!isMerchantPreview) {
-      ApiService.trackConversion(vendeur.id, product.id);
+      void ApiService.trackConversion(vendeur.id, product.id).catch((err) => {
+        console.error('[PublicStore] La commande WhatsApp n’a pas été enregistrée dans les statistiques.', err);
+      });
     }
 
     window.open(whatsappUrl, '_blank');
