@@ -380,7 +380,7 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
 
   const handleShareProductWhatsApp = (prod: Product) => {
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const catalogUrl = `${origin}/v/${encodeURIComponent(vendeur.id)}`;
+    const catalogUrl = `${origin}/v/${encodeURIComponent(vendeur.id)}?product=${encodeURIComponent(prod.id)}`;
     const priceFormatted = formatCurrency(prod.price, vendeur.currency);
     const text = encodeURIComponent(
       `✨ *Article : ${prod.name}*\n` +
@@ -558,10 +558,11 @@ export const CatalogManager: React.FC<CatalogManagerProps> = ({
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => handleShareProductWhatsApp(p)}
-                      className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
-                      title="Partager cet article sur WhatsApp"
+                      className="inline-flex items-center gap-1.5 px-2.5 py-2 text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer text-[11px] font-bold"
+                      title="Préparer le partage de ce produit sur un statut WhatsApp"
                     >
                       <MessageCircle className="w-4 h-4 fill-current" />
+                      <span>Partager sur WhatsApp</span>
                     </button>
                     <button
                       onClick={() => handleOpenEdit(p)}

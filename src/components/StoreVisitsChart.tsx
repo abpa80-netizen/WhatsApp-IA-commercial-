@@ -53,8 +53,22 @@ export const StoreVisitsChart: React.FC<StoreVisitsChartProps> = ({
   };
 
   useEffect(() => {
-    loadData();
-  }, [vendeur.id, vendeur.views, period]);
+    let cancelled = false;
+    const refresh = async (silent = false) => {
+      if (!silent) setLoading(true);
+      try {
+        const stats = await ApiService.getDailyVisits(vendeur, period);
+        if (!cancelled) setChartData(stats);
+      } catch (err) {
+        console.warn('[StoreVisitsChart] Erreur lors du chargement des visites:', err);
+      } finally {
+        if (!cancelled && !silent) setLoading(false);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(true); }, 30000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [vendeur.id, vendeur.uid, vendeur.views, period]);
 
   // Aggregate stats for the selected period
   const totalPeriodViews = chartData.reduce((acc, d) => acc + (d.views || 0), 0);
@@ -124,7 +138,7 @@ export const StoreVisitsChart: React.FC<StoreVisitsChartProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-base font-bold text-slate-900">Évolution des Visites de la Boutique</h3>
+              <h3 className="text-base font-bold text-slate-900">Évaluation des visites de la boutique</h3>
               <span className="hidden md:inline-flex text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/50">
                 Temps Réel
               </span>

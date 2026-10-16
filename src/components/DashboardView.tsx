@@ -273,16 +273,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         {/* Card 3: WhatsApp Conversions */}
         <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs hover:shadow-md transition-shadow">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Commandes WA</span>
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Clics WhatsApp</span>
             <div className="w-9 h-9 rounded-xl bg-emerald-50 text-[#25D366] flex items-center justify-center">
               <MessageCircle className="w-5 h-5" />
             </div>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-2xl sm:text-3xl font-extrabold text-slate-900">{totalConversions}</span>
-            <span className="text-xs font-medium text-emerald-600">Messages reçus</span>
+            
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">Clics « Commander sur WhatsApp »</p>
+          <p className="text-[11px] text-slate-400 mt-1">Clics pour contacter le vendeur</p>
         </div>
 
         {/* Card 4: Conversion Rate */}
@@ -295,9 +295,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-2xl sm:text-3xl font-extrabold text-slate-900">{conversionRate}%</span>
-            <span className="text-xs font-medium text-purple-600">Visiteur → Client</span>
+            
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">Moyenne e-commerce : ~2.5%</p>
+          <p className="text-[11px] text-slate-400 mt-1">Taux calculé à partir des événements enregistrés</p>
         </div>
       </div>
 
