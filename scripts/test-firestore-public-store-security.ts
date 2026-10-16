@@ -138,9 +138,10 @@ function evaluateFirestoreRule(params: {
       const noStatus = !('status' in incomingData!);
       const noPlan = !('plan' in incomingData!);
       const noVip = !('vipEndsAt' in incomingData!) && !('vipStartedAt' in incomingData!);
+      const noVipBadge = !('isVipActive' in incomingData!) || incomingData!.isVipActive === false;
       const noTrial = !('trialEndsAt' in incomingData!) && !('trialStartedAt' in incomingData!);
 
-      const allowed = noRole && noStatus && noPlan && noVip && noTrial;
+      const allowed = noRole && noStatus && noPlan && noVip && noVipBadge && noTrial;
       return { allowed, reason: allowed ? 'Création vitrine publique autorisée' : 'Champs d’abonnement ou de statut interdits sur /publicStores' };
     }
     if (operation === 'update') {
