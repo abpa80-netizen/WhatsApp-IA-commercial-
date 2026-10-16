@@ -162,6 +162,13 @@ function evaluateFirestoreRule(params: {
         }
       }
 
+      // Le badge VIP public est un booléen sûr, mais seul l'admin peut le changer.
+      if ('isVipActive' in incomingData!) {
+        if (!existingData || !('isVipActive' in existingData) || incomingData.isVipActive !== existingData.isVipActive) {
+          return { allowed: false, reason: 'Un vendeur ne peut pas modifier isVipActive' };
+        }
+      }
+
       // Interdiction de champs d'abonnement ou privilèges
       const forbiddenKeys = ['role', 'status', 'plan', 'vipStartedAt', 'vipEndsAt', 'trialStartedAt', 'trialEndsAt', 'date_expiration_essai'];
       const hasForbidden = forbiddenKeys.some(k => k in incomingData!);
