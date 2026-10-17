@@ -120,7 +120,7 @@ export const StoreVisitsChart: React.FC<StoreVisitsChartProps> = ({
               <div className="flex items-center justify-between gap-3 text-purple-300">
                 <span className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-purple-400" />
-                  <span>Commandes WhatsApp :</span>
+                  <span>Clics WhatsApp :</span>
                 </span>
                 <strong className="font-bold font-mono text-sm">{item?.conversions || 0}</strong>
               </div>
@@ -247,7 +247,7 @@ export const StoreVisitsChart: React.FC<StoreVisitsChartProps> = ({
           title="Cliquer pour afficher / masquer les commandes sur le graphique"
         >
           <div className="flex items-center justify-between text-xs text-slate-600">
-            <span className="font-medium">Commandes WA</span>
+            <span className="font-medium">Clics WhatsApp</span>
             <span className="w-2 h-2 rounded-full bg-purple-500" />
           </div>
           <div className="mt-2 flex items-baseline gap-1.5">
