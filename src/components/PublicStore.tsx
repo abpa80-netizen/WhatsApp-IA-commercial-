@@ -160,24 +160,31 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
   };
 
   // Open a product directly when a shared product link includes ?product=<id>.
+  // Direct links must count as product interest too, not only clicks on a product card.
   useEffect(() => {
     if (typeof window === 'undefined' || selectedProduct || products.length === 0) return;
     const requestedProductId = new URLSearchParams(window.location.search).get('product');
     if (!requestedProductId) return;
     const requestedProduct = products.find((product) => product.id === requestedProductId);
-    if (requestedProduct) {
-      setSelectedProduct(requestedProduct);
-      setActiveImageIndex(0);
-    }
-  }, [products, selectedProduct]);
+    if (!requestedProduct) return;
 
-  useEffect(() => {
-    if (typeof window === 'undefined' || selectedProduct || products.length === 0) return;
-    const requestedProductId = new URLSearchParams(window.location.search).get('product');
-    if (!requestedProductId) return;
-    const requestedProduct = products.find((product) => product.id === requestedProductId);
-    if (requestedProduct) { setSelectedProduct(requestedProduct); setActiveImageIndex(0); }
-  }, [products, selectedProduct]);
+    setSelectedProduct(requestedProduct);
+    setActiveImageIndex(0);
+
+    if (isMerchantPreview || !vendeur.id) return;
+    const prodSessionKey = `wca_viewed_prod_${vendeur.id}_${requestedProduct.id}`;
+    if (sessionStorage.getItem(prodSessionKey)) return;
+
+    // Reserve this session key during the write to prevent duplicate events during
+    // React StrictMode/effect replays. Remove it if Firestore rejects the event.
+    sessionStorage.setItem(prodSessionKey, 'pending');
+    void ApiService.trackProductClick(vendeur.id, requestedProduct.id)
+      .then(() => sessionStorage.setItem(prodSessionKey, String(Date.now())))
+      .catch((err) => {
+        sessionStorage.removeItem(prodSessionKey);
+        console.error('[PublicStore] Le clic du lien produit partagé n’a pas été enregistré; une prochaine ouverture pourra réessayer.', err);
+      });
+  }, [products, selectedProduct, isMerchantPreview, vendeur.id]);
 
   const handleCloseProductModal = () => {
     setSelectedProduct(null);
