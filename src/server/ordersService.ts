@@ -344,6 +344,7 @@ export function computeOrderRequestHash(params: {
   deliveryAddress: string;
   items: Array<{ productId: string; quantity: number }>;
   deliveryFee: number;
+  notes?: string;
   currency?: string;
 }): string {
   const normalizedItems = [...params.items]
@@ -359,6 +360,7 @@ export function computeOrderRequestHash(params: {
     customerWhatsApp: String(params.customerWhatsApp || '').trim().replace(/[^\d+]/g, ''),
     deliveryAddress: String(params.deliveryAddress || '').trim().replace(/\s+/g, ' '),
     deliveryFee: Math.round(Number(params.deliveryFee || 0) * 100) / 100,
+    notes: String(params.notes || '').trim().replace(/\\s+/g, ' '),
     items: normalizedItems,
   };
 
@@ -645,6 +647,7 @@ export async function handleCreateOrder(req: any, res: any, options?: CreateOrde
         deliveryAddress,
         items,
         deliveryFee,
+        notes,
         currency,
       });
 
