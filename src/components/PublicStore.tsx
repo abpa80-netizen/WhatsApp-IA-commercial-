@@ -166,7 +166,7 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
   // Open a product directly when a shared product link includes ?product=<id>.
   // Direct links must count as product interest too, not only clicks on a product card.
   useEffect(() => {
-    if (typeof window === 'undefined' || selectedProduct || products.length === 0) return;
+    if (typeof window === 'undefined' || selectedProduct || checkoutProduct || products.length === 0) return;
     const requestedProductId = new URLSearchParams(window.location.search).get('product');
     if (!requestedProductId) return;
     const requestedProduct = products.find((product) => product.id === requestedProductId);
@@ -188,7 +188,7 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
         sessionStorage.removeItem(prodSessionKey);
         console.error('[PublicStore] Le clic du lien produit partagé n’a pas été enregistré; une prochaine ouverture pourra réessayer.', err);
       });
-  }, [products, selectedProduct, isMerchantPreview, vendeur.id]);
+  }, [products, selectedProduct, checkoutProduct, isMerchantPreview, vendeur.id]);
 
   const handleCloseProductModal = () => {
     setSelectedProduct(null);
