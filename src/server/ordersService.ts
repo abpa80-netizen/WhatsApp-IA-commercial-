@@ -326,6 +326,48 @@ export async function checkOrdersRateLimit(
   };
 }
 
+/**
+ * Computes a deterministic SHA-256 fingerprint of the canonical order content.
+ * 
+ * Rules:
+ * - Normalized customer name (trimmed, normalized whitespace)
+ * - Normalized customer WhatsApp (digits & leading plus only)
+ * - Normalized delivery address (trimmed, normalized whitespace)
+ * - Deduplicated items with merged quantities, sorted canonically by productId
+ * - Validated delivery fee rounded to 2 decimals
+ * - Resolved vendor currency
+ * - Strictly excludes non-deterministic runtime fields (createdAt, orderId, nowMs)
+ */
+export function computeOrderRequestHash(params: {
+  customerName: string;
+  customerWhatsApp: string;
+  deliveryAddress: string;
+  items: Array<{ productId: string; quantity: number }>;
+  deliveryFee: number;
+  currency?: string;
+}): string {
+  const normalizedItems = [...params.items]
+    .map((item) => ({
+      productId: String(item.productId || '').trim(),
+      quantity: Number(item.quantity) || 1,
+    }))
+    .sort((a, b) => a.productId.localeCompare(b.productId));
+
+  const canonicalPayload = {
+    currency: String(params.currency || '').trim().toUpperCase(),
+    customerName: String(params.customerName || '').trim().replace(/\s+/g, ' '),
+    customerWhatsApp: String(params.customerWhatsApp || '').trim().replace(/[^\d+]/g, ''),
+    deliveryAddress: String(params.deliveryAddress || '').trim().replace(/\s+/g, ' '),
+    deliveryFee: Math.round(Number(params.deliveryFee || 0) * 100) / 100,
+    items: normalizedItems,
+  };
+
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify(canonicalPayload))
+    .digest('hex');
+}
+
 // ---------------------------------------------------------------------------
 // Strict Input Validation & Duplicate Product Merging
 // ---------------------------------------------------------------------------
@@ -587,11 +629,50 @@ export async function handleCreateOrder(req: any, res: any, options?: CreateOrde
 
     // Helper to process business logic and save order
     const executeOrderProcessing = async (transaction?: any) => {
-      // 6a. Idempotency Check: if key already used for this vendor, return existing order confirmation
+      // 6a. Vendor validation from private source of truth: /users/{uid}
+      const userSnap = transaction ? await transaction.get(userDocRef) : await userDocRef.get();
+      if (!userSnap.exists) {
+        throw new OrderProcessError(404, 'VENDOR_NOT_FOUND', 'Boutique ou vendeur introuvable. Impossible de créer la commande.');
+      }
+
+      const userDoc = userSnap.data() || {};
+      const currency: CurrencyType = userDoc.currency === 'MAD' ? 'MAD' : 'CFA';
+
+      // 6b. Deterministic Order Request Hash
+      const requestHash = computeOrderRequestHash({
+        customerName,
+        customerWhatsApp,
+        deliveryAddress,
+        items,
+        deliveryFee,
+        currency,
+      });
+
+      // 6c. Idempotency Check: if key already used for this vendor, verify requestHash
       if (idempDocRef) {
         const idempSnap = transaction ? await transaction.get(idempDocRef) : await idempDocRef.get();
         if (idempSnap && idempSnap.exists) {
           const cached = idempSnap.data() || {};
+
+          // Safe, explicit handling of legacy keys without requestHash: fail-safe closed
+          if (!cached.requestHash) {
+            throw new OrderProcessError(
+              409,
+              'IDEMPOTENCY_CONFLICT',
+              'Cette clé d’idempotence a été enregistrée avec un format antérieur sans empreinte de validation. Veuillez utiliser une nouvelle clé d’idempotence.'
+            );
+          }
+
+          // Payload mismatch detection: HTTP 409 Conflict without leaking previous order
+          if (cached.requestHash !== requestHash) {
+            throw new OrderProcessError(
+              409,
+              'IDEMPOTENCY_CONFLICT',
+              'Conflit d’idempotence : cette clé a déjà été utilisée pour une commande avec un contenu différent.'
+            );
+          }
+
+          // Valid replay with matching hash: return original confirmation
           return {
             isReplay: true,
             orderId: cached.orderId,
@@ -605,15 +686,7 @@ export async function handleCreateOrder(req: any, res: any, options?: CreateOrde
         }
       }
 
-      // 6b. Vendor validation from private source of truth: /users/{uid}
-      const userSnap = transaction ? await transaction.get(userDocRef) : await userDocRef.get();
-      if (!userSnap.exists) {
-        throw new OrderProcessError(404, 'VENDOR_NOT_FOUND', 'Boutique ou vendeur introuvable. Impossible de créer la commande.');
-      }
-
-      const userDoc = userSnap.data() || {};
-
-      // 6c. Authoritative VIP Subscription Verification using computeVendorEntitlements
+      // 6d. Authoritative VIP Subscription Verification using computeVendorEntitlements
       const entitlements = computeVendorEntitlements(userDoc, nowMs);
 
       if (entitlements.reason === 'suspended') {
@@ -632,9 +705,7 @@ export async function handleCreateOrder(req: any, res: any, options?: CreateOrde
         throw new OrderProcessError(403, 'VIP_REQUIRED', 'La gestion structurée des commandes est réservée aux boutiques disposant d’un abonnement VIP actif.');
       }
 
-      const currency: CurrencyType = userDoc.currency === 'MAD' ? 'MAD' : 'CFA';
-
-      // 6d. Fetch products strictly from /users/{uid}/products/{productId}
+      // 6e. Fetch products strictly from /users/{uid}/products/{productId}
       const orderItems: OrderItem[] = [];
       let calculatedSubtotal = 0;
 
@@ -729,6 +800,7 @@ export async function handleCreateOrder(req: any, res: any, options?: CreateOrde
         const idempPayload = {
           orderId,
           vendeur_id,
+          requestHash,
           status: newOrder.status,
           subtotal: newOrder.subtotal,
           deliveryFee: newOrder.deliveryFee,

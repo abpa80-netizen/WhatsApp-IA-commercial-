@@ -48,6 +48,7 @@ import {
   checkOrdersRateLimit,
   getClientIp,
   resetMemoryRateLimits,
+  computeOrderRequestHash,
 } from '../src/server/ordersService.ts';
 import vercelOrdersHandler from '../api/orders/create.ts';
 import { StructuredOrder } from '../src/types.ts';
@@ -935,6 +936,252 @@ async function runAllTests() {
     assert.strictEqual(orderIdA, orderIdB, 'Les deux réponses font référence au même orderId');
     assert.ok(resA.statusCode === 200 || resA.statusCode === 201);
     assert.ok(resB.statusCode === 200 || resB.statusCode === 201);
+  });
+
+  await runTest('4.6 Même clé + contenu différent renvoie HTTP 409 IDEMPOTENCY_CONFLICT sans créer de commande', async () => {
+    const key = 'conflict_test_key_abc_111';
+    const initialOrdersCount = Object.keys(mockDb._ordersStore['vip_active_seller'] || {}).length;
+
+    // Requête initiale
+    const res1 = createMockResponse();
+    await handleCreateOrder({
+      method: 'POST',
+      body: {
+        vendeur_id: 'vip_active_seller',
+        customerName: 'Client Initial',
+        customerWhatsApp: '+212600112233',
+        deliveryAddress: 'Casablanca',
+        deliveryFee: 20,
+        idempotencyKey: key,
+        items: [{ productId: 'prod_shoes', quantity: 1 }],
+      },
+    }, res1, { adminDb: mockDb, nowMs, skipRateLimit: true });
+
+    assert.strictEqual(res1.statusCode, 201);
+    const countAfterFirst = Object.keys(mockDb._ordersStore['vip_active_seller'] || {}).length;
+    assert.strictEqual(countAfterFirst, initialOrdersCount + 1);
+
+    // Seconde requête avec la MÊME clé mais des articles différents
+    const res2 = createMockResponse();
+    await handleCreateOrder({
+      method: 'POST',
+      body: {
+        vendeur_id: 'vip_active_seller',
+        customerName: 'Client Initial',
+        customerWhatsApp: '+212600112233',
+        deliveryAddress: 'Casablanca',
+        deliveryFee: 20,
+        idempotencyKey: key,
+        items: [{ productId: 'prod_socks', quantity: 3 }], // Articles différents !
+      },
+    }, res2, { adminDb: mockDb, nowMs, skipRateLimit: true });
+
+    assert.strictEqual(res2.statusCode, 409, 'Statut 409 Conflict attendu');
+    assert.strictEqual(res2.data.code, 'IDEMPOTENCY_CONFLICT');
+    assert.ok(res2.data.error.includes('Conflit d’idempotence'), 'Message d’erreur explicite');
+
+    const countAfterSecond = Object.keys(mockDb._ordersStore['vip_active_seller'] || {}).length;
+    assert.strictEqual(countAfterSecond, countAfterFirst, 'AUCUNE nouvelle commande créée lors du conflit 409');
+  });
+
+  await runTest('4.7 Détection de conflit 409 sur chaque champ individuel (nom, WhatsApp, adresse, quantité, frais)', async () => {
+    const checkFieldConflict = async (fieldName: string, payloadModifier: (b: any) => any) => {
+      const fieldKey = `conflict_field_key_${fieldName}_123`;
+      const baseBody = {
+        vendeur_id: 'vip_active_seller',
+        customerName: 'Karim Bennani',
+        customerWhatsApp: '+212655667788',
+        deliveryAddress: 'Bd Zerktouni Casablanca',
+        deliveryFee: 25,
+        idempotencyKey: fieldKey,
+        items: [{ productId: 'prod_shoes', quantity: 1 }],
+      };
+
+      // Création originale
+      const resInit = createMockResponse();
+      await handleCreateOrder({ method: 'POST', body: { ...baseBody } }, resInit, { adminDb: mockDb, nowMs, skipRateLimit: true });
+      assert.strictEqual(resInit.statusCode, 201);
+
+      // Modification du champ testé avec la même clé
+      const modifiedBody = payloadModifier({ ...baseBody });
+      const resConflict = createMockResponse();
+      await handleCreateOrder({ method: 'POST', body: modifiedBody }, resConflict, { adminDb: mockDb, nowMs, skipRateLimit: true });
+
+      assert.strictEqual(resConflict.statusCode, 409, `Le champ "${fieldName}" altéré doit déclencher une 409`);
+      assert.strictEqual(resConflict.data.code, 'IDEMPOTENCY_CONFLICT');
+    };
+
+    await checkFieldConflict('customerName', (b) => ({ ...b, customerName: 'Yassine Bennani' }));
+    await checkFieldConflict('customerWhatsApp', (b) => ({ ...b, customerWhatsApp: '+212699887766' }));
+    await checkFieldConflict('deliveryAddress', (b) => ({ ...b, deliveryAddress: 'Bd Ghandi Casablanca' }));
+    await checkFieldConflict('quantity', (b) => ({ ...b, items: [{ productId: 'prod_shoes', quantity: 3 }] }));
+    await checkFieldConflict('deliveryFee', (b) => ({ ...b, deliveryFee: 40 }));
+  });
+
+  await runTest('4.8 Réorganisation des articles ou des propriétés JSON sans changement sémantique : rejeu reconnu (HTTP 200)', async () => {
+    const reorderKey = 'reorder_idemp_key_canonical_888';
+
+    // Requête 1 : items [shoes x2, socks x1]
+    const res1 = createMockResponse();
+    await handleCreateOrder({
+      method: 'POST',
+      body: {
+        vendeur_id: 'vip_active_seller',
+        customerName: 'Fatima Zahra',
+        customerWhatsApp: '+212 611-223344',
+        deliveryAddress: 'Rabat Souissi',
+        deliveryFee: 15,
+        idempotencyKey: reorderKey,
+        items: [
+          { productId: 'prod_shoes', quantity: 2 },
+          { productId: 'prod_socks', quantity: 1 },
+        ],
+      },
+    }, res1, { adminDb: mockDb, nowMs, skipRateLimit: true });
+    assert.strictEqual(res1.statusCode, 201);
+
+    // Requête 2 : ordre inverse des propriétés et des items [socks x1, shoes x2], numéro avec espaces différents
+    const res2 = createMockResponse();
+    await handleCreateOrder({
+      method: 'POST',
+      body: {
+        deliveryFee: 15,
+        items: [
+          { productId: 'prod_socks', quantity: 1 },
+          { productId: 'prod_shoes', quantity: 2 },
+        ],
+        idempotencyKey: reorderKey,
+        customerAddress: 'Rabat Souissi', // ignored
+        deliveryAddress: '  Rabat   Souissi  ',
+        customerWhatsApp: '+212611223344', // normalisé
+        customerName: '  Fatima Zahra  ',
+        vendeur_id: 'vip_active_seller',
+      },
+    }, res2, { adminDb: mockDb, nowMs, skipRateLimit: true });
+
+    assert.strictEqual(res2.statusCode, 200, 'Reconnu comme le même contenu sémantique grâce au hash déterministe');
+    assert.strictEqual(res2.data.replayed, true);
+    assert.strictEqual(res2.data.orderId, res1.data.orderId);
+  });
+
+  await runTest('4.9 Deux requêtes simultanées avec la même clé et des contenus divergents : une créée (201), l’autre rejetée (409)', async () => {
+    const simultaneousDivergentKey = 'divergent_concurrent_key_999';
+    const resA = createMockResponse();
+    const resB = createMockResponse();
+
+    const initialCount = Object.keys(mockDb._ordersStore['vip_active_seller'] || {}).length;
+
+    await Promise.all([
+      handleCreateOrder({
+        method: 'POST',
+        body: {
+          vendeur_id: 'vip_active_seller',
+          customerName: 'Acheteur A',
+          customerWhatsApp: '+212600111111',
+          deliveryAddress: 'Casablanca',
+          idempotencyKey: simultaneousDivergentKey,
+          items: [{ productId: 'prod_shoes', quantity: 1 }],
+        },
+      }, resA, { adminDb: mockDb, nowMs, skipRateLimit: true }),
+      handleCreateOrder({
+        method: 'POST',
+        body: {
+          vendeur_id: 'vip_active_seller',
+          customerName: 'Acheteur B différent',
+          customerWhatsApp: '+212600222222',
+          deliveryAddress: 'Marrakech',
+          idempotencyKey: simultaneousDivergentKey,
+          items: [{ productId: 'prod_socks', quantity: 2 }],
+        },
+      }, resB, { adminDb: mockDb, nowMs, skipRateLimit: true }),
+    ]);
+
+    const finalCount = Object.keys(mockDb._ordersStore['vip_active_seller'] || {}).length;
+    assert.strictEqual(finalCount, initialCount + 1, 'Exactement UNE commande a été créée');
+
+    const statusCodes = [resA.statusCode, resB.statusCode].sort();
+    assert.deepStrictEqual(statusCodes, [201, 409], 'Une requête obtient 201 (créée) et la concurrente divergente obtient 409 (conflit)');
+  });
+
+  await runTest('4.10 La réponse 409 ne divulgue aucune information de la commande initiale', async () => {
+    const leakTestKey = 'leak_test_key_secret_555';
+
+    // Commande initiale avec données privées du client A
+    const resA = createMockResponse();
+    await handleCreateOrder({
+      method: 'POST',
+      body: {
+        vendeur_id: 'vip_active_seller',
+        customerName: 'Client Secret VIP A',
+        customerWhatsApp: '+212699887766',
+        deliveryAddress: 'Villa Secrète Rabat',
+        deliveryFee: 50,
+        idempotencyKey: leakTestKey,
+        items: [{ productId: 'prod_shoes', quantity: 2 }],
+      },
+    }, resA, { adminDb: mockDb, nowMs, skipRateLimit: true });
+    assert.strictEqual(resA.statusCode, 201);
+
+    // Attaquant ou tiers B envoyant la même clé avec d'autres données
+    const resB = createMockResponse();
+    await handleCreateOrder({
+      method: 'POST',
+      body: {
+        vendeur_id: 'vip_active_seller',
+        customerName: 'Attaquant Curieux B',
+        customerWhatsApp: '+212600000000',
+        deliveryAddress: 'Casablanca',
+        deliveryFee: 0,
+        idempotencyKey: leakTestKey,
+        items: [{ productId: 'prod_socks', quantity: 1 }],
+      },
+    }, resB, { adminDb: mockDb, nowMs, skipRateLimit: true });
+
+    assert.strictEqual(resB.statusCode, 409);
+    assert.strictEqual(resB.data.orderId, undefined, 'Pas d’orderId dans la réponse 409');
+    assert.strictEqual(resB.data.customerName, undefined, 'Pas de customerName dans la réponse 409');
+    assert.strictEqual(resB.data.items, undefined, 'Pas de liste d’articles dans la réponse 409');
+    assert.strictEqual(resB.data.subtotal, undefined, 'Pas de sous-total dans la réponse 409');
+    assert.strictEqual(resB.data.total, undefined, 'Pas de total dans la réponse 409');
+    assert.strictEqual(resB.data.currency, undefined, 'Pas de devise dans la réponse 409');
+    assert.strictEqual(resB.data.code, 'IDEMPOTENCY_CONFLICT');
+  });
+
+  await runTest('4.11 Une ancienne clé d’idempotence sans requestHash est gérée de façon sûre (409 sans fuite)', async () => {
+    const legacyKey = 'legacy_key_without_request_hash_333';
+
+    // Injection directe d'un ancien document sans requestHash dans le store
+    if (!mockDb._idempotencyStore['vip_active_seller']) {
+      mockDb._idempotencyStore['vip_active_seller'] = {};
+    }
+    mockDb._idempotencyStore['vip_active_seller'][legacyKey] = {
+      orderId: 'ord_legacy_9999',
+      vendeur_id: 'vip_active_seller',
+      subtotal: 500,
+      total: 520,
+      status: 'Nouveau',
+      createdAt: new Date(nowMs - 2 * day).toISOString(),
+      // requestHash is intentionally missing
+    };
+
+    const res = createMockResponse();
+    await handleCreateOrder({
+      method: 'POST',
+      body: {
+        vendeur_id: 'vip_active_seller',
+        customerName: 'Client Avec Ancienne Clé',
+        customerWhatsApp: '+212611223344',
+        deliveryAddress: 'Tanger',
+        deliveryFee: 20,
+        idempotencyKey: legacyKey,
+        items: [{ productId: 'prod_shoes', quantity: 1 }],
+      },
+    }, res, { adminDb: mockDb, nowMs, skipRateLimit: true });
+
+    assert.strictEqual(res.statusCode, 409, 'Refusé avec 409');
+    assert.strictEqual(res.data.code, 'IDEMPOTENCY_CONFLICT');
+    assert.ok(res.data.error.includes('format antérieur'), 'Message explicite invitant à renouveler la clé');
+    assert.strictEqual(res.data.orderId, undefined, 'Aucune fuite de l’ancien orderId');
   });
 
   // ---------------------------------------------------------------------------
