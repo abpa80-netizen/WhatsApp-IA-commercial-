@@ -19,6 +19,7 @@ import { CatalogManager } from './components/CatalogManager';
 import { AIMessageGenerator } from './components/AIMessageGenerator';
 import { ProspectsCRM } from './components/ProspectsCRM';
 import { BrandingSettings } from './components/BrandingSettings';
+import { OrdersDashboard } from './components/OrdersDashboard';
 import { PublicStore } from './components/PublicStore';
 import { AdminPortal } from './components/AdminPortal';
 import { PWAInstallBanner } from './components/PWAInstaller';
@@ -26,6 +27,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { 
   LayoutDashboard, 
   ShoppingBag, 
+  ShoppingCart,
   Sparkles, 
   Users, 
   Palette, 
@@ -40,7 +42,7 @@ import {
   ArrowLeft
 } from 'lucide-react';
 
-type ActiveTab = 'dashboard' | 'catalog' | 'ai' | 'crm' | 'branding';
+type ActiveTab = 'dashboard' | 'catalog' | 'orders' | 'ai' | 'crm' | 'branding';
 
 // Utility to inspect URL parameters and hash routes for instant public store / admin access
 const getInitialRouteInfo = () => {
@@ -707,6 +709,7 @@ function MainApp() {
   const navItems = [
     { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
     { id: 'catalog', label: 'Catalogue', icon: ShoppingBag, badge: products.length },
+    { id: 'orders', label: 'Commandes', icon: ShoppingCart },
     { id: 'ai', label: 'Commercial IA', icon: Sparkles, highlight: true },
     { id: 'crm', label: 'CRM Prospects', icon: Users, badge: prospects.length },
     { id: 'branding', label: 'Mon Profil & Sécurité', icon: UserCheck },
@@ -823,6 +826,13 @@ function MainApp() {
             onSaveProduct={handleSaveProduct}
             onDeleteProduct={handleDeleteProduct}
             onOpenStore={() => handleOpenStore()}
+            onOpenUpgradeModal={handleOpenVipModal}
+          />
+        )}
+
+        {activeTab === 'orders' && (
+          <OrdersDashboard
+            vendeur={activeVendeur}
             onOpenUpgradeModal={handleOpenVipModal}
           />
         )}
