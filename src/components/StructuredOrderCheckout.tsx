@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AlertCircle, CheckCircle2, Minus, Plus, ShoppingCart, X } from 'lucide-react';
-import { Product, Vendeur, PublicStoreProfile } from '../types';
+import { Product, Vendeur, PublicStoreProfile, CurrencyType } from '../types';
 import { ApiService } from '../services/api';
 import { formatCurrency } from '../services/aiGenerator';
 
@@ -26,7 +26,7 @@ export const StructuredOrderCheckout: React.FC<StructuredOrderCheckoutProps> = (
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [result, setResult] = useState<{ orderId: string; total: number; currency: string } | null>(null);
+  const [result, setResult] = useState<{ orderId: string; total: number; currency: CurrencyType } | null>(null);
 
   if (!open) return null;
 
@@ -79,7 +79,7 @@ export const StructuredOrderCheckout: React.FC<StructuredOrderCheckoutProps> = (
         if (response.status === 409) setIdempotencyKey('');
         throw new Error(data.error || ('Impossible d’enregistrer la commande (HTTP ' + response.status + ').'));
       }
-      setResult({ orderId: String(data.orderId), total: Number(data.total || 0), currency: String(data.currency || vendeur.currency) });
+      setResult({ orderId: String(data.orderId), total: Number(data.total || 0), currency: (data.currency === 'MAD' ? 'MAD' : data.currency === 'CFA' ? 'CFA' : vendeur.currency) as CurrencyType });
       const productIds = cart.map(({ product }) => product.id);
       setCartItems({});
       await Promise.allSettled(productIds.map((productId) => ApiService.trackConversion(vendeur.id, productId)));
