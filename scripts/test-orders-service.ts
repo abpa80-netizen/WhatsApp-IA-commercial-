@@ -737,7 +737,7 @@ async function runAllTests() {
         customerName: 'Hacker Test',
         customerWhatsApp: '+212699999999',
         deliveryAddress: 'Rabat',
-        deliveryFee: 0,
+        deliveryFee: 99999, // Le client tente aussi de manipuler les frais
         items: [
           {
             productId: 'prod_shoes', // Vrai prix catalogue = 450 MAD
@@ -752,6 +752,7 @@ async function runAllTests() {
 
     assert.strictEqual(res.statusCode, 201);
     assert.strictEqual(res.data.subtotal, 900, 'Le serveur applique le prix officiel Firestore (450 * 2 = 900)');
+    assert.strictEqual(res.data.deliveryFee, 0, 'Les frais envoyés par le client sont ignorés');
     assert.strictEqual(res.data.total, 900, 'Le total frauduleux est rejeté');
 
     const savedOrder = mockDb._ordersStore['vip_active_seller'][res.data.orderId];
