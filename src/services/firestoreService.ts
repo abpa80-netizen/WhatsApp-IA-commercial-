@@ -183,6 +183,7 @@ export const FirestoreService = {
         created_at: createdAt || '',
         createdAt: createdAt,
         updatedAt: d.updatedAt,
+        defaultDeliveryFee: Number.isFinite(Number(d.defaultDeliveryFee)) && Number(d.defaultDeliveryFee) >= 0 ? Number(d.defaultDeliveryFee) : 0,
       };
     } catch (err) {
       handleFirestoreError(err, OperationType.GET, docPath);
@@ -208,6 +209,11 @@ export const FirestoreService = {
       if (data.location !== undefined) payload.location = data.location;
       if (data.logo !== undefined) payload.logo = data.logo;
       if (data.currency !== undefined) payload.currency = data.currency;
+      if (data.defaultDeliveryFee !== undefined) {
+        const fee = Number(data.defaultDeliveryFee);
+        if (!Number.isFinite(fee) || fee < 0 || fee > 1000000) throw new Error('Les frais de livraison doivent être compris entre 0 et 1 000 000.');
+        payload.defaultDeliveryFee = Math.round(fee * 100) / 100;
+      }
       if (data.publicSlug !== undefined) payload.publicSlug = data.publicSlug;
 
       // Sensitive subscription & privilege fields:
@@ -278,6 +284,7 @@ export const FirestoreService = {
         publicSlug: uid,
         orderWhatsApp: undefined,
         allowCommercialContact: false,
+        defaultDeliveryFee: 0,
       };
     }
 
@@ -355,6 +362,7 @@ export const FirestoreService = {
       publicSlug: d.publicSlug || uid,
       orderWhatsApp: orderContact,
       allowCommercialContact: Boolean(orderContact),
+      defaultDeliveryFee: Number.isFinite(Number(d.defaultDeliveryFee)) && Number(d.defaultDeliveryFee) >= 0 && Number(d.defaultDeliveryFee) <= 1000000 ? Math.round(Number(d.defaultDeliveryFee) * 100) / 100 : 0,
     };
   },
 
@@ -376,6 +384,7 @@ export const FirestoreService = {
         publicSlug: sanitized.publicSlug,
         orderWhatsApp: sanitized.orderWhatsApp || null,
         allowCommercialContact: Boolean(sanitized.allowCommercialContact),
+        defaultDeliveryFee: sanitized.defaultDeliveryFee ?? 0,
         updatedAt: new Date().toISOString(),
       };
 
@@ -410,6 +419,7 @@ export const FirestoreService = {
         publicSlug: sanitized.publicSlug,
         orderWhatsApp: sanitized.orderWhatsApp || null,
         allowCommercialContact: Boolean(sanitized.allowCommercialContact),
+        defaultDeliveryFee: sanitized.defaultDeliveryFee ?? 0,
         updatedAt: new Date().toISOString(),
       };
 
