@@ -1018,6 +1018,27 @@ async function runAllTests() {
     await checkFieldConflict('deliveryFee', (b) => ({ ...b, deliveryFee: 40 }));
   });
 
+  await runTest('4.7b Une note client modifiée avec la même clé produit un conflit 409', async () => {
+    const key = 'conflict_notes_key_456';
+    const baseBody = {
+      vendeur_id: 'vip_active_seller',
+      customerName: 'Client Notes',
+      customerWhatsApp: '+212655667788',
+      deliveryAddress: 'Casablanca',
+      deliveryFee: 0,
+      notes: 'Livrer après 18h',
+      idempotencyKey: key,
+      items: [{ productId: 'prod_shoes', quantity: 1 }],
+    };
+    const first = createMockResponse();
+    await handleCreateOrder({ method: 'POST', body: baseBody }, first, { adminDb: mockDb, nowMs, skipRateLimit: true });
+    assert.strictEqual(first.statusCode, 201);
+    const second = createMockResponse();
+    await handleCreateOrder({ method: 'POST', body: { ...baseBody, notes: 'Appeler avant livraison' } }, second, { adminDb: mockDb, nowMs, skipRateLimit: true });
+    assert.strictEqual(second.statusCode, 409);
+    assert.strictEqual(second.data.code, 'IDEMPOTENCY_CONFLICT');
+  });
+
   await runTest('4.8 Réorganisation des articles ou des propriétés JSON sans changement sémantique : rejeu reconnu (HTTP 200)', async () => {
     const reorderKey = 'reorder_idemp_key_canonical_888';
 
