@@ -1367,7 +1367,8 @@ async function runAllTests() {
     assert.ok(rulesContent.includes('allow read: if isAdmin();'), 'Lecture directe vendeur bloquée; les lectures vendeur passent par API VIP');
     assert.ok(rulesContent.includes('allow delete: if isAdmin();'), 'Suppression réservée à admin');
     assert.ok(rulesContent.includes('allow update: if isAdmin();'), 'Modification directe vendeur bloquée; les changements passent par API VIP');
-    assert.ok(rulesContent.includes('\'Nouveau\', \'Confirmée\', \'En préparation\', \'Expédiée\', \'Livrée\', \'Annulée\''), 'Validation des 6 statuts autorisés');
+    const managementContent = fs.readFileSync(path.resolve(process.cwd(), 'src/server/ordersManagementService.ts'), 'utf-8');
+    assert.ok(managementContent.includes("['Nouveau', 'Confirmée', 'En préparation', 'Expédiée', 'Livrée', 'Annulée']"), 'API serveur valide les 6 statuts autorisés');
   });
 
   await runTest('7.2 Vérification de la fermeture hermétique de /users/{uid}/idempotency/{idempId} aux clients directs', () => {
