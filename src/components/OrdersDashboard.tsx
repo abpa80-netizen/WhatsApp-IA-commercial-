@@ -53,7 +53,7 @@ export const OrdersDashboard: React.FC<OrdersDashboardProps> = ({ vendeur, onOpe
   const isOwnerSession = Boolean(uid && (uid === vendeur.id || auth.currentUser?.email?.trim().toLowerCase() === 'foosco80@gmail.com'));
 
   const loadOrders = useCallback(async (quiet = false) => {
-    if (!uid || uid !== vendeur.id) {
+    if (!uid || !isOwnerSession) {
       setOrders([]);
       setLoadError('La session authentifiée ne correspond pas à cette boutique. Reconnectez-vous pour consulter les commandes.');
       setLoading(false);
@@ -91,7 +91,7 @@ export const OrdersDashboard: React.FC<OrdersDashboardProps> = ({ vendeur, onOpe
       setLoading(false);
       setRefreshing(false);
     }
-  }, [uid, vendeur.id]);
+  }, [uid, vendeur.id, isOwnerSession]);
 
   useEffect(() => {
     void loadOrders();
