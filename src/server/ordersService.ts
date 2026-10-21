@@ -344,6 +344,7 @@ export function computeOrderRequestHash(params: {
   deliveryAddress: string;
   items: Array<{ productId: string; quantity: number }>;
   deliveryFee: number;
+  notes?: string;
   currency?: string;
 }): string {
   const normalizedItems = [...params.items]
@@ -359,6 +360,7 @@ export function computeOrderRequestHash(params: {
     customerWhatsApp: String(params.customerWhatsApp || '').trim().replace(/[^\d+]/g, ''),
     deliveryAddress: String(params.deliveryAddress || '').trim().replace(/\s+/g, ' '),
     deliveryFee: Math.round(Number(params.deliveryFee || 0) * 100) / 100,
+    notes: String(params.notes || '').trim().replace(/\s+/g, ' '),
     items: normalizedItems,
   };
 
@@ -638,13 +640,44 @@ export async function handleCreateOrder(req: any, res: any, options?: CreateOrde
       const userDoc = userSnap.data() || {};
       const currency: CurrencyType = userDoc.currency === 'MAD' ? 'MAD' : 'CFA';
 
+      // 6d. Authoritative VIP Subscription Verification using computeVendorEntitlements
+      const entitlements = computeVendorEntitlements(userDoc, nowMs);
+
+      if (entitlements.reason === 'suspended') {
+        throw new OrderProcessError(403, 'VENDOR_SUSPENDED', 'Cette boutique est actuellement inactive ou suspendue par l’administrateur.');
+      }
+      if (entitlements.reason === 'trial_active') {
+        throw new OrderProcessError(403, 'VIP_REQUIRED', 'La gestion structurée des commandes est une fonctionnalité réservée aux vendeurs VIP actifs. L’essai gratuit ne permet pas d’activer cette option.');
+      }
+      if (entitlements.reason === 'trial_expired') {
+        throw new OrderProcessError(403, 'VIP_REQUIRED', 'La période d’essai de cette boutique est expirée. Le vendeur doit activer le Pack VIP pour recevoir des commandes structurées.');
+      }
+      if (entitlements.reason === 'vip_expired') {
+        throw new OrderProcessError(403, 'VIP_EXPIRED', 'L’abonnement VIP de cette boutique est arrivé à expiration. La commande structurée est réservée aux abonnements VIP actifs.');
+      }
+      if (entitlements.reason !== 'vip_active') {
+        throw new OrderProcessError(403, 'VIP_REQUIRED', 'La gestion structurée des commandes est réservée aux boutiques disposant d’un abonnement VIP actif.');
+      }
+
+
+
+      // Delivery fees are authoritative seller settings. Never trust a fee submitted by a public customer.
+      const configuredDeliveryFee = userDoc.defaultDeliveryFee === undefined || userDoc.defaultDeliveryFee === null
+        ? 0
+        : Number(userDoc.defaultDeliveryFee);
+      if (!Number.isFinite(configuredDeliveryFee) || configuredDeliveryFee < 0 || configuredDeliveryFee > 1000000) {
+        throw new OrderProcessError(500, 'VENDOR_DELIVERY_FEE_INVALID', 'Les frais de livraison configurés par la boutique sont invalides. Veuillez contacter le vendeur.');
+      }
+      const officialDeliveryFee = Math.round(configuredDeliveryFee * 100) / 100;
+
       // 6b. Deterministic Order Request Hash
       const requestHash = computeOrderRequestHash({
         customerName,
         customerWhatsApp,
         deliveryAddress,
         items,
-        deliveryFee,
+        deliveryFee: officialDeliveryFee,
+        notes,
         currency,
       });
 
@@ -684,25 +717,6 @@ export async function handleCreateOrder(req: any, res: any, options?: CreateOrde
             itemCount: cached.itemCount,
           };
         }
-      }
-
-      // 6d. Authoritative VIP Subscription Verification using computeVendorEntitlements
-      const entitlements = computeVendorEntitlements(userDoc, nowMs);
-
-      if (entitlements.reason === 'suspended') {
-        throw new OrderProcessError(403, 'VENDOR_SUSPENDED', 'Cette boutique est actuellement inactive ou suspendue par l’administrateur.');
-      }
-      if (entitlements.reason === 'trial_active') {
-        throw new OrderProcessError(403, 'VIP_REQUIRED', 'La gestion structurée des commandes est une fonctionnalité réservée aux vendeurs VIP actifs. L’essai gratuit ne permet pas d’activer cette option.');
-      }
-      if (entitlements.reason === 'trial_expired') {
-        throw new OrderProcessError(403, 'VIP_REQUIRED', 'La période d’essai de cette boutique est expirée. Le vendeur doit activer le Pack VIP pour recevoir des commandes structurées.');
-      }
-      if (entitlements.reason === 'vip_expired') {
-        throw new OrderProcessError(403, 'VIP_EXPIRED', 'L’abonnement VIP de cette boutique est arrivé à expiration. La commande structurée est réservée aux abonnements VIP actifs.');
-      }
-      if (entitlements.reason !== 'vip_active') {
-        throw new OrderProcessError(403, 'VIP_REQUIRED', 'La gestion structurée des commandes est réservée aux boutiques disposant d’un abonnement VIP actif.');
       }
 
       // 6e. Fetch products strictly from /users/{uid}/products/{productId}
@@ -756,7 +770,7 @@ export async function handleCreateOrder(req: any, res: any, options?: CreateOrde
 
       // 6e. Calculate server-side totals
       const subtotal = Math.round(calculatedSubtotal * 100) / 100;
-      const finalDeliveryFee = Math.round(deliveryFee * 100) / 100;
+      const finalDeliveryFee = officialDeliveryFee;
       const total = Math.round((subtotal + finalDeliveryFee) * 100) / 100;
       const itemCount = orderItems.reduce((acc, curr) => acc + curr.quantity, 0);
 

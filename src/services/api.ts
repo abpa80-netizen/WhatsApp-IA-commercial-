@@ -8,7 +8,9 @@ import {
   CurrencyType,
   AuthResponse,
   PublicStoreProfile,
-  DailyVisitStat
+  DailyVisitStat,
+  StructuredOrder,
+  OrderStatus
 } from '../types';
 import { FirestoreService, DEFAULT_GLOBAL_SETTINGS } from './firestoreService';
 import { AuthService } from './authService';
@@ -265,6 +267,44 @@ export const ApiService = {
     const cleanId = vendeurId.trim();
     this.ensureAuthenticatedOwner(cleanId);
     return await FirestoreService.deleteUserProspect(cleanId, prospectId);
+  },
+
+  // 9b. Structured VIP Orders (private owner scope)
+  async getOrders(vendeurId: string): Promise<StructuredOrder[]> {
+    const cleanId = vendeurId.trim();
+    this.ensureAuthenticatedOwner(cleanId);
+    const user = auth.currentUser;
+    if (!user) throw new Error('Connexion requise.');
+    const token = await user.getIdToken();
+    const response = await fetch('/api/orders/list?vendeurId=' + encodeURIComponent(cleanId), {
+      method: 'GET',
+      headers: { Authorization: 'Bearer ' + token },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !Array.isArray(data.orders)) {
+      throw new Error(data.error || ('Impossible de charger les commandes (HTTP ' + response.status + ').'));
+    }
+    return data.orders as StructuredOrder[];
+  },
+
+  async updateOrderStatus(vendeurId: string, orderId: string, status: OrderStatus): Promise<void> {
+    const cleanId = vendeurId.trim();
+    this.ensureAuthenticatedOwner(cleanId);
+    const user = auth.currentUser;
+    if (!user) throw new Error('Connexion requise.');
+    if (!orderId || orderId.length > 128 || !/^[a-zA-Z0-9_\-]+$/.test(orderId)) {
+      throw new Error('Identifiant de commande invalide.');
+    }
+    const token = await user.getIdToken();
+    const response = await fetch('/api/orders/status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ vendeur_id: cleanId, orderId, status }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) {
+      throw new Error(data.error || ('Impossible de mettre à jour la commande (HTTP ' + response.status + ').'));
+    }
   },
 
   // 10. Metrics tracking

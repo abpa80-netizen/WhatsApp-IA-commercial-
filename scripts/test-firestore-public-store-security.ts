@@ -642,6 +642,12 @@ runTest('16. firestore.rules protège les droits d’accès avec vendorTampering
   assert.ok(rules.includes('isVendorActive(uid)'), 'La règle de création/mise à jour produit doit exiger isVendorActive');
 });
 
+runTest('16b. Le tarif public de livraison doit correspondre au profil privé vendeur', () => {
+  const rules = fs.readFileSync('firestore.rules', 'utf8');
+  assert.ok(rules.includes('function deliveryFeeMatchesPrivateProfile(uid)'), 'Fonction de vérification du tarif de livraison requise');
+  assert.ok(rules.includes('deliveryFeeMatchesPrivateProfile(uid)'), 'Les règles publicStores doivent vérifier le tarif côté serveur');
+});
+
 runTest('17. Tentative de création frauduleuse : Un vendeur ne peut pas créer sa vitrine avec hasFullCatalog: true', () => {
   const sellerAuth: AuthContext = { uid: 'seller_hacker', email: 'hacker@wa.local' };
   const storeId = 'seller_hacker';

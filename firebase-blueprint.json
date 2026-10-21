@@ -21,6 +21,7 @@
         "location": { "type": "string", "description": "Ville et pays du commerçant", "maxLength": 100 },
         "logo": { "type": "string", "description": "URL Cloud Storage du logo de la boutique", "maxLength": 1024 },
         "currency": { "type": "string", "enum": ["MAD", "CFA"], "description": "Devise principale de facturation" },
+        "defaultDeliveryFee": { "type": "number", "description": "Frais de livraison par défaut définis par le vendeur, vérifiés côté serveur", "minimum": 0, "maximum": 1000000 },
         "createdAt": { "type": "string", "description": "Date de création du compte" },
         "updatedAt": { "type": "string", "description": "Date de dernière modification" }
       },
@@ -72,6 +73,7 @@
         "location": { "type": "string", "description": "Localisation publique", "maxLength": 100 },
         "logo": { "type": "string", "description": "URL du logo de la boutique", "maxLength": 1024 },
         "currency": { "type": "string", "enum": ["MAD", "CFA"], "description": "Devise de la boutique" },
+        "defaultDeliveryFee": { "type": "number", "description": "Tarif de livraison public synchronisé depuis le profil privé du vendeur", "minimum": 0, "maximum": 1000000 },
         "is_active": { "type": "boolean", "description": "Boutique active ou suspendue" },
         "hasFullCatalog": { "type": "boolean", "description": "Accès au catalogue complet ou restreint à 4 produits" },
         "isVipActive": { "type": "boolean", "description": "Indique si le badge public VIP est actif, sans exposer les dates privées" },
@@ -81,6 +83,35 @@
         "updatedAt": { "type": "string", "description": "Date ISO de mise à jour" }
       },
       "required": ["id", "name", "currency", "publicSlug", "updatedAt"]
+    },
+    "StructuredOrder": {
+      "title": "StructuredOrder",
+      "description": "Commande structurée créée côté serveur pour une boutique VIP active",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Identifiant de commande" },
+        "vendeur_id": { "type": "string", "description": "UID Firebase du vendeur propriétaire" },
+        "customerName": { "type": "string", "maxLength": 100 },
+        "customerWhatsApp": { "type": "string", "maxLength": 32 },
+        "deliveryAddress": { "type": "string", "maxLength": 250 },
+        "items": { "type": "array", "items": { "type": "object", "properties": {
+          "productId": { "type": "string" },
+          "name": { "type": "string" },
+          "price": { "type": "number" },
+          "quantity": { "type": "integer", "minimum": 1, "maximum": 1000 },
+          "total": { "type": "number" },
+          "image": { "type": "string" }
+        }, "required": ["productId", "name", "price", "quantity", "total"] } },
+        "subtotal": { "type": "number" },
+        "deliveryFee": { "type": "number", "minimum": 0 },
+        "total": { "type": "number" },
+        "currency": { "type": "string", "enum": ["MAD", "CFA"] },
+        "status": { "type": "string", "enum": ["Nouveau", "Confirmée", "En préparation", "Expédiée", "Livrée", "Annulée"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "notes": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["id", "vendeur_id", "customerName", "customerWhatsApp", "deliveryAddress", "items", "subtotal", "deliveryFee", "total", "currency", "status", "createdAt", "updatedAt"]
     },
     "GlobalSettings": {
       "title": "GlobalSettings",

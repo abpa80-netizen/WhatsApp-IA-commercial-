@@ -28,6 +28,18 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    // A public storefront may display only the delivery fee stored on its private vendor profile.
+    // This prevents direct client writes from showing a fee different from the server-calculated order total.
+    function deliveryFeeMatchesPrivateProfile(uid) {
+      let privatePath = /databases/$(database)/documents/users/$(uid);
+      return exists(privatePath) &&
+        (!('defaultDeliveryFee' in request.resource.data) ||
+          request.resource.data.defaultDeliveryFee ==
+            (get(privatePath).data.keys().hasAny(['defaultDeliveryFee'])
+              ? get(privatePath).data.defaultDeliveryFee
+              : 0));
+    }
+
     // Helper to check if vendor account is active (not suspended by admin)
     // An absent private user document cannot be treated as an active merchant.
     function isVendorActive(uid) {
@@ -121,18 +133,14 @@ service cloud.firestore {
 
       // 4. Orders sub-collection: Scoped under users/{uid}/orders/{orderId}
       match /orders/{orderId} {
-        // Lecture réservée au vendeur propriétaire authentifié et à l’administrateur autorisé
-        allow read: if isOwner(uid) || isAdmin();
+        // Les lectures et changements de statut passent par l’API serveur qui revérifie l’abonnement VIP actif.
+        allow read: if isAdmin();
 
         // Aucune création directe par le navigateur : la création publique passe par l’API serveur sécurisée
         allow create: if false;
 
-        // Modification limitée au statut et à la date de mise à jour, après validation des valeurs autorisées
-        allow update: if (
-          isOwner(uid) &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']) &&
-          request.resource.data.status in ['Nouveau', 'Confirmée', 'En préparation', 'Expédiée', 'Livrée', 'Annulée']
-        ) || isAdmin();
+        // Les changements du vendeur passent par l’API serveur, qui vérifie le VIP actif et le statut autorisé.
+        allow update: if isAdmin();
 
         // Suppression réservée à l’administrateur
         allow delete: if isAdmin();
@@ -163,6 +171,7 @@ service cloud.firestore {
           isAdmin() ||
           (
             isVendorActive(uid) &&
+            deliveryFeeMatchesPrivateProfile(uid) &&
             (!('hasFullCatalog' in request.resource.data) || request.resource.data.hasFullCatalog == false) &&
             (!('is_active' in request.resource.data) || request.resource.data.is_active == true) &&
             (!('isVipActive' in request.resource.data) || request.resource.data.isVipActive == false) &&
@@ -184,6 +193,7 @@ service cloud.firestore {
       allow update: if (
         isOwner(uid) && 
         request.resource.data.id == uid && 
+        deliveryFeeMatchesPrivateProfile(uid) &&
         !vendorTamperingPublicStoreEntitlements()
       ) || isAdmin();
 

@@ -681,6 +681,7 @@ async function runAllTests() {
   });
 
   await runTest('3.2 Commande nominale avec VIP actif : succès 201 et sauvegarde conforme dans Firestore', async () => {
+    mockDb._usersStore['vip_active_seller'].defaultDeliveryFee = 35;
     const res = createMockResponse();
     await handleCreateOrder({
       method: 'POST',
@@ -723,6 +724,7 @@ async function runAllTests() {
     assert.strictEqual(savedOrder.items[0].quantity, 2);
     assert.strictEqual(savedOrder.items[0].total, 900);
     assert.strictEqual(savedOrder.items[0].image, 'https://res.cloudinary.com/test/shoes.webp');
+    mockDb._usersStore['vip_active_seller'].defaultDeliveryFee = 0;
   });
 
   await runTest('3.3 Sécurité absolue : les prix et totaux manipulés par le client sont IGNORÉS', async () => {
@@ -735,7 +737,7 @@ async function runAllTests() {
         customerName: 'Hacker Test',
         customerWhatsApp: '+212699999999',
         deliveryAddress: 'Rabat',
-        deliveryFee: 0,
+        deliveryFee: 99999, // Le client tente aussi de manipuler les frais
         items: [
           {
             productId: 'prod_shoes', // Vrai prix catalogue = 450 MAD
@@ -750,6 +752,7 @@ async function runAllTests() {
 
     assert.strictEqual(res.statusCode, 201);
     assert.strictEqual(res.data.subtotal, 900, 'Le serveur applique le prix officiel Firestore (450 * 2 = 900)');
+    assert.strictEqual(res.data.deliveryFee, 0, 'Les frais envoyés par le client sont ignorés');
     assert.strictEqual(res.data.total, 900, 'Le total frauduleux est rejeté');
 
     const savedOrder = mockDb._ordersStore['vip_active_seller'][res.data.orderId];
@@ -759,6 +762,7 @@ async function runAllTests() {
   });
 
   await runTest('3.4 VIP Indéfini (sans vipEndsAt) et devise CFA acceptés avec exactitude', async () => {
+    mockDb._usersStore['vip_indefinite_seller'].defaultDeliveryFee = 1500;
     const res = createMockResponse();
     await handleCreateOrder({
       method: 'POST',
@@ -779,12 +783,14 @@ async function runAllTests() {
     assert.strictEqual(res.data.subtotal, 15000);
     assert.strictEqual(res.data.deliveryFee, 1500);
     assert.strictEqual(res.data.total, 16500);
+    mockDb._usersStore['vip_indefinite_seller'].defaultDeliveryFee = 0;
   });
 
   // ---------------------------------------------------------------------------
   // GROUP 4: Idempotency Protection (Prompt 2A)
   // ---------------------------------------------------------------------------
   await runTest('4.1 Création initiale avec idempotencyKey enregistre le document d’idempotence', async () => {
+    mockDb._usersStore['vip_active_seller'].defaultDeliveryFee = 20;
     const res = createMockResponse();
     const idempKey = 'order_test_key_001_initial';
 
@@ -836,6 +842,7 @@ async function runAllTests() {
     assert.strictEqual(resReplay.statusCode, 200, 'Statut 200 renvoyé pour le rejeu idempotent');
     assert.strictEqual(resReplay.data.replayed, true, 'Indicateur replayed: true retourné');
     assert.strictEqual(resReplay.data.total, 470);
+    mockDb._usersStore['vip_active_seller'].defaultDeliveryFee = 0;
 
     const finalOrdersCount = Object.keys(mockDb._ordersStore['vip_active_seller'] || {}).length;
     assert.strictEqual(finalOrdersCount, initialOrdersCount, 'AUCUNE nouvelle commande créée dans Firestore');
@@ -997,6 +1004,10 @@ async function runAllTests() {
         items: [{ productId: 'prod_shoes', quantity: 1 }],
       };
 
+      // Configure the seller-side fee, which is the only trusted delivery-fee source.
+      const originalFee = mockDb._usersStore['vip_active_seller'].defaultDeliveryFee;
+      mockDb._usersStore['vip_active_seller'].defaultDeliveryFee = fieldName === 'deliveryFee' ? 25 : 0;
+
       // Création originale
       const resInit = createMockResponse();
       await handleCreateOrder({ method: 'POST', body: { ...baseBody } }, resInit, { adminDb: mockDb, nowMs, skipRateLimit: true });
@@ -1004,11 +1015,13 @@ async function runAllTests() {
 
       // Modification du champ testé avec la même clé
       const modifiedBody = payloadModifier({ ...baseBody });
+      if (fieldName === 'deliveryFee') mockDb._usersStore['vip_active_seller'].defaultDeliveryFee = 40;
       const resConflict = createMockResponse();
       await handleCreateOrder({ method: 'POST', body: modifiedBody }, resConflict, { adminDb: mockDb, nowMs, skipRateLimit: true });
 
       assert.strictEqual(resConflict.statusCode, 409, `Le champ "${fieldName}" altéré doit déclencher une 409`);
       assert.strictEqual(resConflict.data.code, 'IDEMPOTENCY_CONFLICT');
+      mockDb._usersStore['vip_active_seller'].defaultDeliveryFee = originalFee;
     };
 
     await checkFieldConflict('customerName', (b) => ({ ...b, customerName: 'Yassine Bennani' }));
@@ -1016,6 +1029,27 @@ async function runAllTests() {
     await checkFieldConflict('deliveryAddress', (b) => ({ ...b, deliveryAddress: 'Bd Ghandi Casablanca' }));
     await checkFieldConflict('quantity', (b) => ({ ...b, items: [{ productId: 'prod_shoes', quantity: 3 }] }));
     await checkFieldConflict('deliveryFee', (b) => ({ ...b, deliveryFee: 40 }));
+  });
+
+  await runTest('4.7b Une note client modifiée avec la même clé produit un conflit 409', async () => {
+    const key = 'conflict_notes_key_456';
+    const baseBody = {
+      vendeur_id: 'vip_active_seller',
+      customerName: 'Client Notes',
+      customerWhatsApp: '+212655667788',
+      deliveryAddress: 'Casablanca',
+      deliveryFee: 0,
+      notes: 'Livrer après 18h',
+      idempotencyKey: key,
+      items: [{ productId: 'prod_shoes', quantity: 1 }],
+    };
+    const first = createMockResponse();
+    await handleCreateOrder({ method: 'POST', body: baseBody }, first, { adminDb: mockDb, nowMs, skipRateLimit: true });
+    assert.strictEqual(first.statusCode, 201);
+    const second = createMockResponse();
+    await handleCreateOrder({ method: 'POST', body: { ...baseBody, notes: 'Appeler avant livraison' } }, second, { adminDb: mockDb, nowMs, skipRateLimit: true });
+    assert.strictEqual(second.statusCode, 409);
+    assert.strictEqual(second.data.code, 'IDEMPOTENCY_CONFLICT');
   });
 
   await runTest('4.8 Réorganisation des articles ou des propriétés JSON sans changement sémantique : rejeu reconnu (HTTP 200)', async () => {
@@ -1185,6 +1219,30 @@ async function runAllTests() {
   });
 
   // ---------------------------------------------------------------------------
+  await runTest('4.12 Un rejeu de commande est refusé dès que le VIP expire', async () => {
+    const key = 'vip_expiry_replay_key_778';
+    const body = {
+      vendeur_id: 'vip_active_seller',
+      customerName: 'Client VIP',
+      customerWhatsApp: '+212600123456',
+      deliveryAddress: 'Rabat',
+      deliveryFee: 0,
+      idempotencyKey: key,
+      items: [{ productId: 'prod_shoes', quantity: 1 }],
+    };
+    const original = { ...mockDb._usersStore['vip_active_seller'] };
+    const first = createMockResponse();
+    await handleCreateOrder({ method: 'POST', body }, first, { adminDb: mockDb, nowMs, skipRateLimit: true });
+    assert.strictEqual(first.statusCode, 201);
+
+    mockDb._usersStore['vip_active_seller'].vipEndsAt = new Date(nowMs - day).toISOString();
+    const replay = createMockResponse();
+    await handleCreateOrder({ method: 'POST', body }, replay, { adminDb: mockDb, nowMs, skipRateLimit: true });
+    assert.strictEqual(replay.statusCode, 403);
+    assert.strictEqual(replay.data.code, 'VIP_EXPIRED');
+    mockDb._usersStore['vip_active_seller'] = original;
+  });
+
   // GROUP 5: Distributed Rate Limiting & Anti-Abuse (Prompt 2A)
   // ---------------------------------------------------------------------------
   await runTest('5.1 Extraction sécurisée de l’adresse IP cliente selon la topologie Vercel', () => {
@@ -1308,10 +1366,11 @@ async function runAllTests() {
 
     assert.ok(rulesContent.includes('match /orders/{orderId}'), 'Règle match /orders/{orderId} présente');
     assert.ok(rulesContent.includes('allow create: if false;'), 'Création directe navigateur interdite (allow create: if false)');
-    assert.ok(rulesContent.includes('allow read: if isOwner(uid) || isAdmin();'), 'Lecture réservée au propriétaire ou admin');
+    assert.ok(rulesContent.includes('allow read: if isAdmin();'), 'Lecture directe vendeur bloquée; les lectures vendeur passent par API VIP');
     assert.ok(rulesContent.includes('allow delete: if isAdmin();'), 'Suppression réservée à admin');
-    assert.ok(rulesContent.includes('affectedKeys().hasOnly([\'status\', \'updatedAt\'])'), 'Modification limitée à status et updatedAt');
-    assert.ok(rulesContent.includes('\'Nouveau\', \'Confirmée\', \'En préparation\', \'Expédiée\', \'Livrée\', \'Annulée\''), 'Validation des 6 statuts autorisés');
+    assert.ok(rulesContent.includes('allow update: if isAdmin();'), 'Modification directe vendeur bloquée; les changements passent par API VIP');
+    const managementContent = fs.readFileSync(path.resolve(process.cwd(), 'src/server/ordersManagementService.ts'), 'utf-8');
+    assert.ok(managementContent.includes("['Nouveau', 'Confirmée', 'En préparation', 'Expédiée', 'Livrée', 'Annulée']"), 'API serveur valide les 6 statuts autorisés');
   });
 
   await runTest('7.2 Vérification de la fermeture hermétique de /users/{uid}/idempotency/{idempId} aux clients directs', () => {

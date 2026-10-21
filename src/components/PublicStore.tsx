@@ -11,12 +11,14 @@ import {
   ArrowLeft, 
   Eye,
   Search,
-  Crown
+  Crown,
+  ShoppingCart
 } from 'lucide-react';
 import { formatCurrency } from '../services/aiGenerator';
 import { ApiService } from '../services/api';
 import { useToast } from './Toast';
 import { getVendorEntitlements } from '../services/entitlements';
+import { StructuredOrderCheckout } from './StructuredOrderCheckout';
 
 interface PublicStoreProps {
   vendeur: Vendeur | PublicStoreProfile;
@@ -38,6 +40,9 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
+  const [cartItems, setCartItems] = useState<Record<string, number>>({});
+  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [pendingIdempotencyKey, setPendingIdempotencyKey] = useState('');
 
   // Track one shop view per browser session. Mark it only AFTER Firestore confirms the write.
   // Previously the session was marked before the async write, so a denied/failed write was never retried.
@@ -221,6 +226,38 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
       return normalizeInternationalWhatsApp(pub.orderWhatsApp, pub.currency);
     }
     return '';
+  };
+
+
+  // Structured checkout is available only on public storefronts with an active VIP entitlement.
+  const structuredOrdersEnabled = isVipStore && !isMerchantPreview;
+  const sellerDeliveryFee = Math.max(0, Number((vendeur as any).defaultDeliveryFee || 0));
+  const cartCount = Object.values(cartItems).reduce((sum, quantity) => sum + quantity, 0);
+  const cartSubtotal = Math.round(products.reduce((sum, product) => sum + product.price * (cartItems[product.id] || 0), 0) * 100) / 100;
+  const cartTotal = Math.round((cartSubtotal + sellerDeliveryFee) * 100) / 100;
+
+  const addToCart = (product: Product) => {
+    if (!structuredOrdersEnabled) return;
+    setCartItems((current) => ({ ...current, [product.id]: Math.min(1000, (current[product.id] || 0) + 1) }));
+    setPendingIdempotencyKey('');
+    showToast(product.name + ' ajouté au panier.', 'success');
+  };
+
+  const openStructuredCheckout = () => {
+    if (!structuredOrdersEnabled) {
+      showToast('Les commandes structurées sont réservées aux boutiques VIP actives.', 'info');
+      return;
+    }
+    if (cartCount < 1) {
+      showToast('Ajoutez au moins un produit au panier.', 'info');
+      return;
+    }
+    setIsCheckoutOpen(true);
+  };
+
+  const closeStructuredCheckout = () => {
+    setIsCheckoutOpen(false);
+    setPendingIdempotencyKey('');
   };
 
   const hasPublicContact = Boolean(getSellerContactDigits());
@@ -422,7 +459,7 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
                     <div className="h-4 bg-slate-200 rounded w-1/2 pt-1" />
                   </div>
                 </div>
-                <div className="p-2.5 pt-0 grid grid-cols-2 gap-1.5">
+                <div className={structuredOrdersEnabled ? "p-2.5 pt-0 grid grid-cols-3 gap-1.5" : "p-2.5 pt-0 grid grid-cols-2 gap-1.5"}>
                   <div className="h-8 bg-slate-100 rounded-xl" />
                   <div className="h-8 bg-emerald-100 rounded-xl" />
                 </div>
@@ -524,6 +561,18 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
                       <MessageCircle className="w-3.5 h-3.5 fill-current shrink-0" />
                       <span className="truncate">{hasPublicContact ? 'Contacter le vendeur' : 'Contact indisponible'}</span>
                     </button>
+                    {structuredOrdersEnabled && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); addToCart(product); }}
+                        aria-label={"Ajouter " + product.name + " au panier"}
+                        className="flex items-center justify-center gap-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-bold py-2 px-1.5 rounded-xl text-[10px] sm:text-xs transition-all cursor-pointer"
+                      >
+                        <ShoppingCart className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">Ajouter</span>
+                      </button>
+                    )}
+
                   </div>
                 </div>
               );
@@ -548,6 +597,17 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
             </div>
           </div>
 
+
+          {structuredOrdersEnabled && cartCount > 0 && (
+            <button
+              type="button"
+              onClick={openStructuredCheckout}
+              className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 px-3 sm:px-4 rounded-xl text-xs sm:text-sm shadow-md shrink-0 transition-all"
+            >
+              <ShoppingCart className="w-4 h-4" />
+              <span><span className="hidden sm:inline">Panier ({cartCount}) · {formatCurrency(cartTotal, vendeur.currency)}</span><span className="sm:hidden">Panier ({cartCount})</span></span>
+            </button>
+          )}
           <button
             onClick={handleGeneralContactWhatsApp}
             disabled={!hasPublicContact}
@@ -673,6 +733,17 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
 
             {/* Modal Bottom CTA */}
             <div className="p-4 sm:p-5 bg-slate-50 border-t border-slate-100 rounded-b-3xl">
+
+              {structuredOrdersEnabled && (
+                <button
+                  type="button"
+                  onClick={() => { addToCart(selectedProduct); handleCloseProductModal(); }}
+                  className="w-full mb-2 flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-bold py-3.5 px-4 rounded-xl shadow-sm text-sm transition-all"
+                >
+                  <ShoppingCart className="w-5 h-5" />
+                  <span>Ajouter au panier</span>
+                </button>
+              )}
               <button
                 id="btn-order-wa-modal"
                 onClick={() => handleOrderWhatsApp(selectedProduct)}
@@ -687,6 +758,17 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
           </div>
         </div>
       )}
+
+      <StructuredOrderCheckout
+        open={isCheckoutOpen}
+        vendeur={vendeur}
+        products={products}
+        cartItems={cartItems}
+        setCartItems={setCartItems}
+        idempotencyKey={pendingIdempotencyKey}
+        setIdempotencyKey={setPendingIdempotencyKey}
+        onClose={closeStructuredCheckout}
+      />
     </div>
   );
 };
