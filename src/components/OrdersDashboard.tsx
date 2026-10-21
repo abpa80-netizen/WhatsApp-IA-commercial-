@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, CheckCircle2, Clock3, LoaderCircle, PackageCheck, RefreshCw,
-  Search, ShoppingBag, Truck, XCircle
+  AlertCircle, LoaderCircle, RefreshCw, Search, ShoppingBag
 } from 'lucide-react';
 import { auth, collection, db, doc, getDocs, updateDoc } from '../firebase';
 import { OrderStatus, StructuredOrder, Vendeur } from '../types';
