@@ -64,6 +64,10 @@
       "destination": "/api/cloudinary/sign"
     },
     {
+      "source": "/api/orders/create",
+      "destination": "/api/orders/create"
+    },
+    {
       "source": "/api/admin/recalculate-entitlements",
       "destination": "/api/admin/recalculate-entitlements"
     },

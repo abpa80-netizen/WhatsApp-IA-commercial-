@@ -118,6 +118,25 @@ service cloud.firestore {
         // Strictly private CRM: Only the vendor owner can read or write
         allow read, write: if isOwner(uid) || isAdmin();
       }
+
+      // 4. Orders sub-collection: Scoped under users/{uid}/orders/{orderId}
+      match /orders/{orderId} {
+        // Lecture réservée au vendeur propriétaire authentifié et à l’administrateur autorisé
+        allow read: if isOwner(uid) || isAdmin();
+
+        // Aucune création directe par le navigateur : la création publique passe par l’API serveur sécurisée
+        allow create: if false;
+
+        // Modification limitée au statut et à la date de mise à jour, après validation des valeurs autorisées
+        allow update: if (
+          isOwner(uid) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']) &&
+          request.resource.data.status in ['Nouveau', 'Confirmée', 'En préparation', 'Expédiée', 'Livrée', 'Annulée']
+        ) || isAdmin();
+
+        // Suppression réservée à l’administrateur
+        allow delete: if isAdmin();
+      }
     }
 
     // 2. Public Stores collection (/publicStores/{uid}) - PROFIL PUBLIC DÉDIÉ

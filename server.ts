@@ -377,6 +377,14 @@ app.all('/api/admin/recalculate-entitlements', async (req: Request, res: Respons
   return handleRecalculateEntitlements(req, res);
 });
 
+// -------------------------------------------------------------------------
+// 5. VIP STRUCTURED ORDERS CREATION ENDPOINT
+// -------------------------------------------------------------------------
+app.all('/api/orders/create', async (req: Request, res: Response) => {
+  const { handleCreateOrder } = await import('./src/server/ordersService.ts');
+  return handleCreateOrder(req, res);
+});
+
 // START SERVER WITH VITE (DEV) OR STATIC DIST (PROD)
 async function startServer() {
   const isProd = process.env.NODE_ENV === 'production';

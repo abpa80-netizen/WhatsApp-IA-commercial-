@@ -109,6 +109,43 @@
         "source": { "type": "string", "description": "Origine du suivi analytique pour distinguer les événements vérifiés des anciennes données" }
       },
       "required": ["id", "vendeur_id", "type", "timestamp"]
+    },
+    "StructuredOrder": {
+      "title": "StructuredOrder",
+      "description": "Commande structurée passée auprès d'une boutique VIP active",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "ID unique de la commande" },
+        "vendeur_id": { "type": "string", "description": "UID Firebase du vendeur propriétaire" },
+        "customerName": { "type": "string", "description": "Nom complet du client", "maxLength": 100 },
+        "customerWhatsApp": { "type": "string", "description": "Numéro WhatsApp du client", "maxLength": 32 },
+        "deliveryAddress": { "type": "string", "description": "Adresse de livraison", "maxLength": 250 },
+        "items": {
+          "type": "array",
+          "description": "Articles commandés avec quantités et prix vérifiés côté serveur",
+          "items": {
+            "type": "object",
+            "properties": {
+              "productId": { "type": "string" },
+              "name": { "type": "string" },
+              "price": { "type": "number" },
+              "quantity": { "type": "number" },
+              "total": { "type": "number" },
+              "image": { "type": "string" }
+            },
+            "required": ["productId", "name", "price", "quantity", "total"]
+          }
+        },
+        "subtotal": { "type": "number", "description": "Sous-total calculé côté serveur" },
+        "deliveryFee": { "type": "number", "description": "Frais de livraison" },
+        "total": { "type": "number", "description": "Montant total de la commande calculé côté serveur" },
+        "currency": { "type": "string", "enum": ["MAD", "CFA"], "description": "Devise de la commande" },
+        "status": { "type": "string", "enum": ["Nouveau", "Confirmée", "En préparation", "Expédiée", "Livrée", "Annulée"], "description": "Statut de traitement" },
+        "createdAt": { "type": "string", "description": "Date ISO de création" },
+        "updatedAt": { "type": "string", "description": "Date ISO de dernière mise à jour" },
+        "notes": { "type": "string", "description": "Notes de commande facultatives", "maxLength": 1000 }
+      },
+      "required": ["id", "vendeur_id", "customerName", "customerWhatsApp", "deliveryAddress", "items", "subtotal", "total", "currency", "status", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -127,6 +164,10 @@
     "/users/{uid}/prospects/{prospectId}": {
       "schema": { "$ref": "#/entities/Prospect" },
       "description": "Contacts CRM isolés par vendeur"
+    },
+    "/users/{uid}/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/StructuredOrder" },
+      "description": "Commandes structurées de la boutique VIP"
     },
     "/settings/global": {
       "schema": { "$ref": "#/entities/GlobalSettings" },

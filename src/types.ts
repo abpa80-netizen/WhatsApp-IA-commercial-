@@ -93,6 +93,34 @@ export interface Prospect {
   last_contact?: string;
 }
 
+export type OrderStatus = 'Nouveau' | 'Confirmée' | 'En préparation' | 'Expédiée' | 'Livrée' | 'Annulée';
+
+export interface OrderItem {
+  productId: string;
+  name: string;
+  price: number;
+  quantity: number;
+  total: number;
+  image?: string;
+}
+
+export interface StructuredOrder {
+  id: string;
+  vendeur_id: string; // Firebase UID du vendeur
+  customerName: string;
+  customerWhatsApp: string;
+  deliveryAddress: string;
+  items: OrderItem[];
+  subtotal: number;
+  deliveryFee: number;
+  total: number;
+  currency: CurrencyType;
+  status: OrderStatus;
+  createdAt: string;
+  updatedAt: string;
+  notes?: string;
+}
+
 export interface SystemConfig {
   price_vip: number;
   price_vip_cfa: number;
