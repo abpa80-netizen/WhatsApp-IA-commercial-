@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle2, Minus, Plus, ShoppingCart, X } from 'lucide-react';
 import { Product, Vendeur, PublicStoreProfile, CurrencyType } from '../types';
 import { ApiService } from '../services/api';
@@ -27,6 +27,13 @@ export const StructuredOrderCheckout: React.FC<StructuredOrderCheckoutProps> = (
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<{ orderId: string; total: number; currency: CurrencyType } | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setResult(null);
+      setError('');
+    }
+  }, [open]);
 
   if (!open) return null;
 
