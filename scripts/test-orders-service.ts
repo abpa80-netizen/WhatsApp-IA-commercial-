@@ -984,7 +984,7 @@ async function runAllTests() {
     assert.strictEqual(countAfterSecond, countAfterFirst, 'AUCUNE nouvelle commande créée lors du conflit 409');
   });
 
-  await runTest('4.7 Détection de conflit 409 sur chaque champ individuel (nom, WhatsApp, adresse, quantité, frais)', async () => {
+  await runTest('4.7 Détection de conflit 409 sur chaque champ individuel (nom, WhatsApp, adresse, quantité, frais, note)', async () => {
     const checkFieldConflict = async (fieldName: string, payloadModifier: (b: any) => any) => {
       const fieldKey = `conflict_field_key_${fieldName}_123`;
       const baseBody = {
@@ -1016,6 +1016,7 @@ async function runAllTests() {
     await checkFieldConflict('deliveryAddress', (b) => ({ ...b, deliveryAddress: 'Bd Ghandi Casablanca' }));
     await checkFieldConflict('quantity', (b) => ({ ...b, items: [{ productId: 'prod_shoes', quantity: 3 }] }));
     await checkFieldConflict('deliveryFee', (b) => ({ ...b, deliveryFee: 40 }));
+    await checkFieldConflict('notes', (b) => ({ ...b, notes: 'Livraison après 18 h' }));
   });
 
   await runTest('4.8 Réorganisation des articles ou des propriétés JSON sans changement sémantique : rejeu reconnu (HTTP 200)', async () => {
