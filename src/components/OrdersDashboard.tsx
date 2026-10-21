@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle, LoaderCircle, RefreshCw, Search, ShoppingBag
 } from 'lucide-react';
-import { auth, collection, db, doc, getDocs, updateDoc } from '../firebase';
+import { auth } from '../firebase';
 import { OrderStatus, StructuredOrder, Vendeur } from '../types';
 import { formatCurrency } from '../services/aiGenerator';
 import { getVendorEntitlements } from '../services/entitlements';
@@ -50,7 +50,7 @@ export const OrdersDashboard: React.FC<OrdersDashboardProps> = ({ vendeur, onOpe
 
   const uid = auth.currentUser?.uid || '';
   const entitlements = getVendorEntitlements(vendeur);
-  const isOwnerSession = Boolean(uid && uid === vendeur.id);
+  const isOwnerSession = Boolean(uid && (uid === vendeur.id || auth.currentUser?.email?.trim().toLowerCase() === 'foosco80@gmail.com'));
 
   const loadOrders = useCallback(async (quiet = false) => {
     if (!uid || uid !== vendeur.id) {
@@ -64,18 +64,25 @@ export const OrdersDashboard: React.FC<OrdersDashboardProps> = ({ vendeur, onOpe
     else setLoading(true);
     setLoadError('');
     try {
-      const snapshot = await getDocs(collection(db, 'users', uid, 'orders'));
-      const nextOrders = snapshot.docs.map((orderDoc: any) => {
-        const data = orderDoc.data() || {};
-        return {
-          ...data,
-          id: orderDoc.id,
-          vendeur_id: uid,
-          items: Array.isArray(data.items) ? data.items : [],
-          status: STATUSES.includes(data.status) ? data.status : 'Nouveau',
-        } as StructuredOrder;
+      const currentUser = auth.currentUser;
+      if (!currentUser) throw new Error('AUTH_REQUIRED');
+      const token = await currentUser.getIdToken();
+      const response = await fetch(`/api/orders/list?vendeur_id=${encodeURIComponent(vendeur.id)}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
       });
-      nextOrders.sort((a, b) => (asDate(b.createdAt)?.getTime() || 0) - (asDate(a.createdAt)?.getTime() || 0));
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.success !== true || !Array.isArray(payload.orders)) {
+        throw new Error(typeof payload.error === 'string' ? payload.error : 'ORDERS_LIST_FAILED');
+      }
+      const nextOrders = payload.orders.map((data: any) => ({
+        ...data,
+        id: String(data.id || ''),
+        vendeur_id: vendeur.id,
+        items: Array.isArray(data.items) ? data.items : [],
+        status: STATUSES.includes(data.status) ? data.status : 'Nouveau',
+      } as StructuredOrder));
+      nextOrders.sort((a: StructuredOrder, b: StructuredOrder) => (asDate(b.createdAt)?.getTime() || 0) - (asDate(a.createdAt)?.getTime() || 0));
       setOrders(nextOrders);
     } catch (error) {
       console.error('[OrdersDashboard] Impossible de charger les commandes:', error);
@@ -95,15 +102,24 @@ export const OrdersDashboard: React.FC<OrdersDashboardProps> = ({ vendeur, onOpe
     if (order.status === status) return;
     setSavingOrderId(order.id);
     try {
-      await updateDoc(doc(db, 'users', uid, 'orders', order.id), {
-        status,
-        updatedAt: new Date().toISOString(),
+      const currentUser = auth.currentUser;
+      if (!currentUser) throw new Error('AUTH_REQUIRED');
+      const token = await currentUser.getIdToken();
+      const response = await fetch('/api/orders/update-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ vendeur_id: vendeur.id, orderId: order.id, status }),
       });
-      setOrders((current) => current.map((item) => item.id === order.id ? { ...item, status, updatedAt: new Date().toISOString() } : item));
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.success !== true) {
+        throw new Error(typeof payload.error === 'string' ? payload.error : 'ORDER_STATUS_UPDATE_FAILED');
+      }
+      const updatedAt = typeof payload.updatedAt === 'string' ? payload.updatedAt : new Date().toISOString();
+      setOrders((current) => current.map((item) => item.id === order.id ? { ...item, status, updatedAt } : item));
       showToast('Statut de la commande mis à jour.', 'success');
     } catch (error) {
       console.error('[OrdersDashboard] Mise à jour du statut refusée:', error);
-      showToast('Impossible de modifier le statut. Vérifiez les règles Firestore déployées.', 'error');
+      showToast('Impossible de modifier le statut. Vérifiez votre connexion et vos droits VIP.', 'error');
     } finally {
       setSavingOrderId(null);
     }
