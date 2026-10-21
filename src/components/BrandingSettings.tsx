@@ -48,6 +48,7 @@ export const BrandingSettings: React.FC<BrandingSettingsProps> = ({
   const [location, setLocation] = useState(vendeur.location);
   const [logo, setLogo] = useState(vendeur.logo);
   const [currency, setCurrency] = useState<CurrencyType>(vendeur.currency);
+  const [defaultDeliveryFee, setDefaultDeliveryFee] = useState(String(vendeur.defaultDeliveryFee ?? 0));
 
   // Security / Password fields
   const [currentPassword, setCurrentPassword] = useState('');
@@ -127,6 +128,7 @@ export const BrandingSettings: React.FC<BrandingSettingsProps> = ({
         location: location.trim(),
         logo: logo.trim(),
         currency,
+        defaultDeliveryFee: Number(defaultDeliveryFee || 0),
       });
 
       await onUpdateBranding(updatedVendor);
@@ -493,6 +495,18 @@ export const BrandingSettings: React.FC<BrandingSettingsProps> = ({
                 onChange={(e) => setLocation(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#25D366]"
               />
+            </div>
+          </div>
+
+          {/* Structured order delivery fee */}
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 space-y-2">
+            <label htmlFor="default-delivery-fee" className="block text-xs font-bold text-slate-800 uppercase tracking-wider">
+              Frais de livraison par défaut
+            </label>
+            <p className="text-xs text-slate-600">Ce montant est appliqué côté serveur aux commandes structurées. Le client ne peut pas le modifier depuis le formulaire de commande.</p>
+            <div className="flex items-center gap-3">
+              <input id="default-delivery-fee" type="number" min="0" max="1000000" step="0.01" value={defaultDeliveryFee} onChange={(e) => setDefaultDeliveryFee(e.target.value)} className="w-full max-w-xs bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#25D366]" />
+              <span className="text-sm font-bold text-slate-600">{currency}</span>
             </div>
           </div>
 
