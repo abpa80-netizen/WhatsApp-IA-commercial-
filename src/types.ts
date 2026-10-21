@@ -119,6 +119,7 @@ export interface StructuredOrder {
   createdAt: string;
   updatedAt: string;
   notes?: string;
+  idempotencyKey?: string;
 }
 
 export interface SystemConfig {

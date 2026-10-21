@@ -137,6 +137,12 @@ service cloud.firestore {
         // Suppression réservée à l’administrateur
         allow delete: if isAdmin();
       }
+
+      // 5. Idempotency sub-collection: Scoped under users/{uid}/idempotency/{idempId}
+      // Strictement réservée au backend Firebase Admin (transactions de commande)
+      match /idempotency/{idempId} {
+        allow read, write: if false;
+      }
     }
 
     // 2. Public Stores collection (/publicStores/{uid}) - PROFIL PUBLIC DÉDIÉ
@@ -202,6 +208,11 @@ service cloud.firestore {
         resource.data.vendeur_id == request.auth.uid || isAdmin()
       );
       allow update, delete: if isAdmin();
+    }
+
+    // 6. Rate limits collection: Compteurs distribués anti-abus (Admin / Backend Serverless uniquement)
+    match /rateLimits/{limitId} {
+      allow read, write: if false;
     }
   }
 }

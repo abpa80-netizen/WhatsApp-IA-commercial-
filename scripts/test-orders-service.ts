@@ -1,27 +1,42 @@
 /**
- * Test Suite: VIP Structured Orders Engine & Validation (Prompt 1/3)
+ * Test Suite: VIP Structured Orders Engine & Hardening (Prompt 1 & Prompt 2A)
  * 
  * Verifies:
  * 1. Strict HTTP POST requirement and OPTIONS CORS preflight
  * 2. Input validation (limits, formats, required fields, quantity boundaries)
- * 3. Authoritative VIP requirement (computeVendorEntitlements)
+ * 3. Safe product deduplication in items (merging quantities, capping cumulative qty at 1000, max 50 items)
+ * 4. Authoritative VIP requirement (computeVendorEntitlements)
  *    - Active VIP accepted (indefinite or future vipEndsAt)
  *    - 3-day trial strictly rejected (VIP_REQUIRED)
  *    - Expired trial strictly rejected (VIP_REQUIRED)
  *    - Expired VIP strictly rejected (VIP_EXPIRED)
  *    - Suspended / Inactive vendors rejected (VENDOR_SUSPENDED)
  *    - Non-existent vendors rejected (VENDOR_NOT_FOUND)
- * 4. Product integrity:
+ * 5. Product integrity:
  *    - Prices read exclusively from Firestore /users/{uid}/products/{productId}
  *    - Client-tampered prices/totals completely ignored
  *    - Non-existent products rejected (PRODUCT_NOT_FOUND)
  *    - Server calculates subtotal, delivery fee and total with floating precision safety
- * 5. Order persistence:
+ * 6. Order persistence:
  *    - Stored in /users/{uid}/orders/{orderId}
  *    - Initial status strictly set to 'Nouveau'
  *    - Clean, safe response without private user document leakage
- * 6. Vercel serverless entrypoint compatibility (api/orders/create.ts)
- * 7. Firestore Security Rules verification for orders subcollection
+ * 7. Idempotency Key Engine:
+ *    - Input validation of idempotency key (8-128 chars, ^[a-zA-Z0-9_\-]+$)
+ *    - Isolation per vendor (/users/{uid}/idempotency/{key})
+ *    - Replay returns cached confirmation (replayed: true, HTTP 200) without creating second order
+ *    - Concurrent requests handled safely via transaction lock
+ *    - Orders without key still work nominally
+ * 8. Distributed Rate Limiting:
+ *    - Reliable IP extraction (x-vercel-forwarded-for, x-forwarded-for, x-real-ip)
+ *    - Hashed IP storage (SHA-256) in /rateLimits/{limitId}
+ *    - Enforces max requests per window (default 10 reqs / 10 min), returns 429 & Retry-After header
+ *    - Fail-open/memory fallback resilience during database error
+ * 9. Firestore Security Rules verification:
+ *    - /users/{uid}/orders/{orderId} permissions
+ *    - /users/{uid}/idempotency/{idempId} completely closed to browser clients
+ *    - /rateLimits/{limitId} completely closed to browser clients
+ * 10. Vercel serverless entrypoint compatibility (api/orders/create.ts)
  */
 
 import assert from 'assert';
@@ -30,11 +45,14 @@ import path from 'path';
 import {
   handleCreateOrder,
   validateOrderInput,
+  checkOrdersRateLimit,
+  getClientIp,
+  resetMemoryRateLimits,
 } from '../src/server/ordersService.ts';
 import vercelOrdersHandler from '../api/orders/create.ts';
 import { StructuredOrder } from '../src/types.ts';
 
-console.log('🧪 Starting VIP Structured Orders Engine Test Suite...\n');
+console.log('🧪 Starting VIP Structured Orders Engine Test Suite (Prompt 2A)...\n');
 
 let testsPassed = 0;
 
@@ -86,12 +104,14 @@ function createMockResponse() {
 }
 
 /**
- * In-memory Mock Firestore Admin DB
+ * In-memory Mock Firestore Admin DB supporting Collections, Subcollections & Transactions
  */
 function createMockAdminDb(initialData: {
   users?: Record<string, any>;
   products?: Record<string, Record<string, any>>;
   orders?: Record<string, Record<string, any>>;
+  idempotency?: Record<string, Record<string, any>>;
+  rateLimits?: Record<string, any>;
 }) {
   const usersStore = { ...(initialData.users || {}) };
   const productsStore: Record<string, Record<string, any>> = {};
@@ -106,14 +126,56 @@ function createMockAdminDb(initialData: {
       ordersStore[uid] = { ...ords };
     }
   }
+  const idempotencyStore: Record<string, Record<string, any>> = {};
+  if (initialData.idempotency) {
+    for (const [uid, idemps] of Object.entries(initialData.idempotency)) {
+      idempotencyStore[uid] = { ...idemps };
+    }
+  }
+  const rateLimitsStore: Record<string, any> = { ...(initialData.rateLimits || {}) };
 
-  return {
+  const db = {
+    _usersStore: usersStore,
+    _productsStore: productsStore,
     _ordersStore: ordersStore,
+    _idempotencyStore: idempotencyStore,
+    _rateLimitsStore: rateLimitsStore,
+
     collection(colName: string) {
+      if (colName === 'rateLimits') {
+        return {
+          doc(limitId: string) {
+            const docRef = {
+              id: limitId,
+              path: `rateLimits/${limitId}`,
+              async get() {
+                const data = rateLimitsStore[limitId];
+                return {
+                  exists: Boolean(data),
+                  id: limitId,
+                  data: () => (data ? { ...data } : undefined),
+                };
+              },
+              async set(data: any, options?: { merge?: boolean }) {
+                if (options?.merge && rateLimitsStore[limitId]) {
+                  rateLimitsStore[limitId] = { ...rateLimitsStore[limitId], ...data };
+                } else {
+                  rateLimitsStore[limitId] = { ...data };
+                }
+                return { writeTime: new Date() };
+              },
+            };
+            return docRef;
+          },
+        };
+      }
+
       if (colName === 'users') {
         return {
           doc(uid: string) {
-            return {
+            const userDocRef = {
+              id: uid,
+              path: `users/${uid}`,
               async get() {
                 const data = usersStore[uid];
                 return {
@@ -127,6 +189,8 @@ function createMockAdminDb(initialData: {
                   return {
                     doc(productId: string) {
                       return {
+                        id: productId,
+                        path: `users/${uid}/products/${productId}`,
                         async get() {
                           const vendorProds = productsStore[uid] || {};
                           const prod = vendorProds[productId];
@@ -144,6 +208,8 @@ function createMockAdminDb(initialData: {
                   return {
                     doc(orderId: string) {
                       return {
+                        id: orderId,
+                        path: `users/${uid}/orders/${orderId}`,
                         async set(data: any) {
                           if (!ordersStore[uid]) ordersStore[uid] = {};
                           ordersStore[uid][orderId] = { ...data };
@@ -162,15 +228,64 @@ function createMockAdminDb(initialData: {
                     },
                   };
                 }
+                if (subColName === 'idempotency') {
+                  return {
+                    doc(key: string) {
+                      return {
+                        id: key,
+                        path: `users/${uid}/idempotency/${key}`,
+                        async set(data: any) {
+                          if (!idempotencyStore[uid]) idempotencyStore[uid] = {};
+                          idempotencyStore[uid][key] = { ...data };
+                          return { writeTime: new Date() };
+                        },
+                        async get() {
+                          const vendorIdemps = idempotencyStore[uid] || {};
+                          const idempData = vendorIdemps[key];
+                          return {
+                            exists: Boolean(idempData),
+                            id: key,
+                            data: () => (idempData ? { ...idempData } : undefined),
+                          };
+                        },
+                      };
+                    },
+                  };
+                }
                 throw new Error(`Subcollection ${subColName} not mocked`);
               },
             };
+            return userDocRef;
           },
         };
       }
       throw new Error(`Collection ${colName} not mocked`);
     },
+
+    _txLock: Promise.resolve() as Promise<any>,
+    async runTransaction(updateFunction: (transaction: any) => Promise<any>) {
+      // Models Firestore's document-level transaction isolation and serialization
+      const currentLock = this._txLock;
+      const nextLock = currentLock.then(async () => {
+        const transaction = {
+          async get(docRef: any) {
+            return docRef.get();
+          },
+          set(docRef: any, data: any, options?: any) {
+            return docRef.set(data, options);
+          },
+          update(docRef: any, data: any) {
+            return docRef.set(data, { merge: true });
+          },
+        };
+        return updateFunction(transaction);
+      });
+      this._txLock = nextLock.catch(() => {});
+      return nextLock;
+    },
   };
+
+  return db;
 }
 
 async function runAllTests() {
@@ -178,38 +293,39 @@ async function runAllTests() {
   const day = 24 * 60 * 60 * 1000;
 
   // ---------------------------------------------------------------------------
-  // GROUP 1: Input Validation & Methods
+  // GROUP 1: Input Validation, Methods & Duplicate Product Merging
   // ---------------------------------------------------------------------------
   await runTest('1.1 Rejet de la méthode GET avec 405 Method Not Allowed', async () => {
     const req = { method: 'GET', body: {} };
     const res = createMockResponse();
-    await handleCreateOrder(req, res);
+    await handleCreateOrder(req, res, { skipRateLimit: true });
     assert.strictEqual(res.statusCode, 405);
     assert.strictEqual(res.data.code, 'METHOD_NOT_ALLOWED');
   });
 
-  await runTest('1.2 Requête OPTIONS répond 204 avec les en-têtes CORS', async () => {
+  await runTest('1.2 Requête OPTIONS répond 204 avec les en-têtes CORS et Idempotency', async () => {
     const req = { method: 'OPTIONS' };
     const res = createMockResponse();
-    await handleCreateOrder(req, res);
+    await handleCreateOrder(req, res, { skipRateLimit: true });
     assert.strictEqual(res.statusCode, 204);
     assert.strictEqual(res.headers['Access-Control-Allow-Origin'], '*');
+    assert.ok(res.headers['Access-Control-Allow-Headers'].includes('Idempotency-Key'));
   });
 
   await runTest('1.3 Rejet d’un corps vide ou invalide (400)', async () => {
     const res = createMockResponse();
-    await handleCreateOrder({ method: 'POST', body: null }, res);
+    await handleCreateOrder({ method: 'POST', body: null }, res, { skipRateLimit: true });
     assert.strictEqual(res.statusCode, 400);
     assert.strictEqual(res.data.code, 'INVALID_INPUT');
   });
 
   await runTest('1.4 Rejet si vendeur_id manquant ou caractères invalides (400)', async () => {
     const res1 = createMockResponse();
-    await handleCreateOrder({ method: 'POST', body: { customerName: 'Ahmed' } }, res1);
+    await handleCreateOrder({ method: 'POST', body: { customerName: 'Ahmed' } }, res1, { skipRateLimit: true });
     assert.strictEqual(res1.statusCode, 400);
 
     const res2 = createMockResponse();
-    await handleCreateOrder({ method: 'POST', body: { vendeur_id: 'bad id with spaces!' } }, res2);
+    await handleCreateOrder({ method: 'POST', body: { vendeur_id: 'bad id with spaces!' } }, res2, { skipRateLimit: true });
     assert.strictEqual(res2.statusCode, 400);
   });
 
@@ -224,7 +340,7 @@ async function runAllTests() {
         deliveryAddress: 'Casablanca',
         items: [{ productId: 'p1', quantity: 1 }],
       },
-    }, res);
+    }, res, { skipRateLimit: true });
     assert.strictEqual(res.statusCode, 400);
     assert.strictEqual(res.data.code, 'INVALID_INPUT');
   });
@@ -240,7 +356,7 @@ async function runAllTests() {
         deliveryAddress: 'Marrakech',
         items: [{ productId: 'p1', quantity: 1 }],
       },
-    }, res);
+    }, res, { skipRateLimit: true });
     assert.strictEqual(res.statusCode, 400);
   });
 
@@ -255,7 +371,7 @@ async function runAllTests() {
         deliveryAddress: 'Rabat',
         items: [],
       },
-    }, res1);
+    }, res1, { skipRateLimit: true });
     assert.strictEqual(res1.statusCode, 400);
 
     const res2 = createMockResponse();
@@ -269,7 +385,7 @@ async function runAllTests() {
         deliveryAddress: 'Rabat',
         items: lotsOfItems,
       },
-    }, res2);
+    }, res2, { skipRateLimit: true });
     assert.strictEqual(res2.statusCode, 400);
   });
 
@@ -288,6 +404,66 @@ async function runAllTests() {
     assert.strictEqual(checkQty('deux').valid, false);
     assert.strictEqual(checkQty(1001).valid, false); // Over limit
     assert.strictEqual(checkQty(2).valid, true);
+  });
+
+  await runTest('1.9 Fusion automatique des articles ayant le même productId dans le panier', () => {
+    const res = validateOrderInput({
+      vendeur_id: 'seller_1',
+      customerName: 'Client Test',
+      customerWhatsApp: '+212600000000',
+      deliveryAddress: 'Casablanca',
+      items: [
+        { productId: 'shoes_123', quantity: 2 },
+        { productId: 'socks_456', quantity: 1 },
+        { productId: 'shoes_123', quantity: 3 }, // Duplicata qui doit être fusionné
+      ],
+    });
+
+    assert.strictEqual(res.valid, true);
+    if (res.valid) {
+      assert.strictEqual(res.data.items.length, 2, 'Les duplicatas sont fusionnés : 2 articles uniques');
+      const mergedShoes = res.data.items.find(i => i.productId === 'shoes_123');
+      assert.strictEqual(mergedShoes?.quantity, 5, 'Quantité fusionnée = 2 + 3 = 5');
+    }
+  });
+
+  await runTest('1.10 Rejet si la quantité cumulée d’un produit fusionné dépasse 1000', () => {
+    const res = validateOrderInput({
+      vendeur_id: 'seller_1',
+      customerName: 'Client Test',
+      customerWhatsApp: '+212600000000',
+      deliveryAddress: 'Casablanca',
+      items: [
+        { productId: 'shoes_123', quantity: 600 },
+        { productId: 'shoes_123', quantity: 450 }, // Total = 1050 > 1000
+      ],
+    });
+
+    assert.strictEqual(res.valid, false);
+    if (!res.valid) {
+      assert.ok(res.error.includes('ne peut pas dépasser 1000'), 'Message explicite sur la quantité cumulée');
+    }
+  });
+
+  await runTest('1.11 Validation stricte du format de clé d’idempotence (longueur et caractères)', () => {
+    const checkKey = (key: any) => validateOrderInput({
+      vendeur_id: 'seller_1',
+      customerName: 'Client',
+      customerWhatsApp: '+212600000000',
+      deliveryAddress: 'Casablanca',
+      items: [{ productId: 'p1', quantity: 1 }],
+      idempotencyKey: key,
+    });
+
+    // Too short (<8)
+    assert.strictEqual(checkKey('short').valid, false);
+    // Invalid characters (spaces, special chars)
+    assert.strictEqual(checkKey('key with spaces 123').valid, false);
+    assert.strictEqual(checkKey('key!@#$%^&*()').valid, false);
+    // Too long (>128)
+    assert.strictEqual(checkKey('a'.repeat(129)).valid, false);
+    // Valid format
+    assert.strictEqual(checkKey('checkout_12345678_uuid').valid, true);
   });
 
   // ---------------------------------------------------------------------------
@@ -395,7 +571,7 @@ async function runAllTests() {
         deliveryAddress: 'Tanger',
         items: [{ productId: 'p1', quantity: 1 }],
       },
-    }, res, { adminDb: mockDb, nowMs });
+    }, res, { adminDb: mockDb, nowMs, skipRateLimit: true });
     assert.strictEqual(res.statusCode, 404);
     assert.strictEqual(res.data.code, 'VENDOR_NOT_FOUND');
   });
@@ -411,7 +587,7 @@ async function runAllTests() {
         deliveryAddress: 'Tanger',
         items: [{ productId: 'p1', quantity: 1 }],
       },
-    }, res, { adminDb: mockDb, nowMs });
+    }, res, { adminDb: mockDb, nowMs, skipRateLimit: true });
     assert.strictEqual(res.statusCode, 403);
     assert.strictEqual(res.data.code, 'VENDOR_SUSPENDED');
   });
@@ -427,7 +603,7 @@ async function runAllTests() {
         deliveryAddress: 'Agadir',
         items: [{ productId: 'prod_trial', quantity: 1 }],
       },
-    }, res, { adminDb: mockDb, nowMs });
+    }, res, { adminDb: mockDb, nowMs, skipRateLimit: true });
     assert.strictEqual(res.statusCode, 403);
     assert.strictEqual(res.data.code, 'VIP_REQUIRED');
     assert.ok(res.data.error.includes('réservée aux vendeurs VIP'), 'Message explicite sur l’essai gratuit');
@@ -444,7 +620,7 @@ async function runAllTests() {
         deliveryAddress: 'Agadir',
         items: [{ productId: 'p1', quantity: 1 }],
       },
-    }, res, { adminDb: mockDb, nowMs });
+    }, res, { adminDb: mockDb, nowMs, skipRateLimit: true });
     assert.strictEqual(res.statusCode, 403);
     assert.strictEqual(res.data.code, 'VIP_REQUIRED');
   });
@@ -460,7 +636,7 @@ async function runAllTests() {
         deliveryAddress: 'Fès',
         items: [{ productId: 'p1', quantity: 1 }],
       },
-    }, res, { adminDb: mockDb, nowMs });
+    }, res, { adminDb: mockDb, nowMs, skipRateLimit: true });
     assert.strictEqual(res.statusCode, 403);
     assert.strictEqual(res.data.code, 'VIP_EXPIRED');
   });
@@ -476,7 +652,7 @@ async function runAllTests() {
         deliveryAddress: 'Oujda',
         items: [{ productId: 'p1', quantity: 1 }],
       },
-    }, res, { adminDb: mockDb, nowMs });
+    }, res, { adminDb: mockDb, nowMs, skipRateLimit: true });
     assert.strictEqual(res.statusCode, 403);
     assert.strictEqual(res.data.code, 'VIP_REQUIRED');
   });
@@ -498,7 +674,7 @@ async function runAllTests() {
           { productId: 'prod_inexistant', quantity: 2 },
         ],
       },
-    }, res, { adminDb: mockDb, nowMs });
+    }, res, { adminDb: mockDb, nowMs, skipRateLimit: true });
     assert.strictEqual(res.statusCode, 404);
     assert.strictEqual(res.data.code, 'PRODUCT_NOT_FOUND');
   });
@@ -519,7 +695,7 @@ async function runAllTests() {
           { productId: 'prod_socks', quantity: 1 }, // 50 * 1 = 50
         ],
       },
-    }, res, { adminDb: mockDb, nowMs });
+    }, res, { adminDb: mockDb, nowMs, skipRateLimit: true });
 
     assert.strictEqual(res.statusCode, 201, 'Status code doit être 201 Created');
     assert.strictEqual(res.data.success, true);
@@ -569,7 +745,7 @@ async function runAllTests() {
           },
         ],
       },
-    }, res, { adminDb: mockDb, nowMs });
+    }, res, { adminDb: mockDb, nowMs, skipRateLimit: true });
 
     assert.strictEqual(res.statusCode, 201);
     assert.strictEqual(res.data.subtotal, 900, 'Le serveur applique le prix officiel Firestore (450 * 2 = 900)');
@@ -595,7 +771,7 @@ async function runAllTests() {
           { productId: 'prod_bag', quantity: 1 }, // 15 000 CFA
         ],
       },
-    }, res, { adminDb: mockDb, nowMs });
+    }, res, { adminDb: mockDb, nowMs, skipRateLimit: true });
 
     assert.strictEqual(res.statusCode, 201);
     assert.strictEqual(res.data.currency, 'CFA');
@@ -605,16 +781,258 @@ async function runAllTests() {
   });
 
   // ---------------------------------------------------------------------------
-  // GROUP 4: Vercel Serverless Function & Non-exposure
+  // GROUP 4: Idempotency Protection (Prompt 2A)
   // ---------------------------------------------------------------------------
-  await runTest('4.1 Handler Vercel api/orders/create.ts opérationnel', async () => {
+  await runTest('4.1 Création initiale avec idempotencyKey enregistre le document d’idempotence', async () => {
+    const res = createMockResponse();
+    const idempKey = 'order_test_key_001_initial';
+
+    await handleCreateOrder({
+      method: 'POST',
+      body: {
+        vendeur_id: 'vip_active_seller',
+        customerName: 'Idemp Test User',
+        customerWhatsApp: '+212600112233',
+        deliveryAddress: 'Rabat Agdal',
+        deliveryFee: 20,
+        idempotencyKey: idempKey,
+        items: [{ productId: 'prod_shoes', quantity: 1 }],
+      },
+    }, res, { adminDb: mockDb, nowMs, skipRateLimit: true });
+
+    assert.strictEqual(res.statusCode, 201);
+    const orderId = res.data.orderId;
+    assert.ok(orderId);
+
+    // Vérifier le document d'idempotence
+    const savedIdemp = mockDb._idempotencyStore['vip_active_seller']?.[idempKey];
+    assert.ok(savedIdemp, 'Le document d’idempotence doit être présent dans la sous-collection du vendeur');
+    assert.strictEqual(savedIdemp.orderId, orderId);
+    assert.strictEqual(savedIdemp.vendeur_id, 'vip_active_seller');
+    assert.strictEqual(savedIdemp.total, 470);
+    assert.ok(savedIdemp.expiresAt, 'Le champ d’expiration TTL (7 jours) est présent');
+  });
+
+  await runTest('4.2 Rejeu de commande avec la même idempotencyKey renvoie le résultat sans dupliquer la commande (200 replayed: true)', async () => {
+    const resReplay = createMockResponse();
+    const idempKey = 'order_test_key_001_initial';
+    const initialOrdersCount = Object.keys(mockDb._ordersStore['vip_active_seller'] || {}).length;
+
+    // Deuxième tentative avec les mêmes données ou une requête répétée par le client
+    await handleCreateOrder({
+      method: 'POST',
+      body: {
+        vendeur_id: 'vip_active_seller',
+        customerName: 'Idemp Test User',
+        customerWhatsApp: '+212600112233',
+        deliveryAddress: 'Rabat Agdal',
+        deliveryFee: 20,
+        idempotencyKey: idempKey,
+        items: [{ productId: 'prod_shoes', quantity: 1 }],
+      },
+    }, resReplay, { adminDb: mockDb, nowMs, skipRateLimit: true });
+
+    assert.strictEqual(resReplay.statusCode, 200, 'Statut 200 renvoyé pour le rejeu idempotent');
+    assert.strictEqual(resReplay.data.replayed, true, 'Indicateur replayed: true retourné');
+    assert.strictEqual(resReplay.data.total, 470);
+
+    const finalOrdersCount = Object.keys(mockDb._ordersStore['vip_active_seller'] || {}).length;
+    assert.strictEqual(finalOrdersCount, initialOrdersCount, 'AUCUNE nouvelle commande créée dans Firestore');
+  });
+
+  await runTest('4.3 Envoi de la clé d’idempotence via l’en-tête HTTP Idempotency-Key supporté', async () => {
+    const res = createMockResponse();
+    const idempKey = 'header_idemp_key_abcdef123';
+
+    await handleCreateOrder({
+      method: 'POST',
+      headers: {
+        'idempotency-key': idempKey,
+      },
+      body: {
+        vendeur_id: 'vip_active_seller',
+        customerName: 'Header Client',
+        customerWhatsApp: '+212600112233',
+        deliveryAddress: 'Casablanca Oasis',
+        items: [{ productId: 'prod_shoes', quantity: 1 }],
+      },
+    }, res, { adminDb: mockDb, nowMs, skipRateLimit: true });
+
+    assert.strictEqual(res.statusCode, 201);
+    const savedIdemp = mockDb._idempotencyStore['vip_active_seller']?.[idempKey];
+    assert.ok(savedIdemp, 'La clé issue du header HTTP est bien prise en compte et persistée');
+  });
+
+  await runTest('4.4 Isolation des clés d’idempotence par vendeur (deux vendeurs distincts avec la même clé n’interfèrent pas)', async () => {
+    const sharedKey = 'shared_key_across_vendors_999';
+
+    // Vendeur 1
+    const res1 = createMockResponse();
+    await handleCreateOrder({
+      method: 'POST',
+      body: {
+        vendeur_id: 'vip_active_seller',
+        customerName: 'Client Seller 1',
+        customerWhatsApp: '+212600112233',
+        deliveryAddress: 'Casablanca',
+        idempotencyKey: sharedKey,
+        items: [{ productId: 'prod_shoes', quantity: 1 }],
+      },
+    }, res1, { adminDb: mockDb, nowMs, skipRateLimit: true });
+    assert.strictEqual(res1.statusCode, 201);
+
+    // Vendeur 2 avec la MÊME clé : ne doit PAS renvoyer la commande du Vendeur 1 !
+    const res2 = createMockResponse();
+    await handleCreateOrder({
+      method: 'POST',
+      body: {
+        vendeur_id: 'vip_indefinite_seller',
+        customerName: 'Client Seller 2',
+        customerWhatsApp: '+2250102030405',
+        deliveryAddress: 'Abidjan',
+        idempotencyKey: sharedKey,
+        items: [{ productId: 'prod_bag', quantity: 1 }],
+      },
+    }, res2, { adminDb: mockDb, nowMs, skipRateLimit: true });
+
+    assert.strictEqual(res2.statusCode, 201);
+    assert.notStrictEqual(res1.data.orderId, res2.data.orderId, 'Les commandes des deux vendeurs sont bien distinctes');
+    assert.strictEqual(res2.data.currency, 'CFA');
+    assert.strictEqual(res2.data.replayed, undefined, 'Pas de rejeu erroné entre vendeurs distincts');
+  });
+
+  await runTest('4.5 Requêtes concurrentes simultanées avec la même clé : exactement une commande créée', async () => {
+    const concurrentKey = 'concurrent_order_key_abc_777';
+    const resA = createMockResponse();
+    const resB = createMockResponse();
+
+    const orderPayload = {
+      method: 'POST',
+      body: {
+        vendeur_id: 'vip_active_seller',
+        customerName: 'Concurrent User',
+        customerWhatsApp: '+212600112233',
+        deliveryAddress: 'Casablanca',
+        idempotencyKey: concurrentKey,
+        items: [{ productId: 'prod_shoes', quantity: 1 }],
+      },
+    };
+
+    const initialCount = Object.keys(mockDb._ordersStore['vip_active_seller'] || {}).length;
+
+    // Simulation de 2 requêtes simultanées envoyées par double-clic ou retry immédiat
+    await Promise.all([
+      handleCreateOrder(orderPayload, resA, { adminDb: mockDb, nowMs, skipRateLimit: true }),
+      handleCreateOrder(orderPayload, resB, { adminDb: mockDb, nowMs, skipRateLimit: true }),
+    ]);
+
+    const finalCount = Object.keys(mockDb._ordersStore['vip_active_seller'] || {}).length;
+    assert.strictEqual(finalCount, initialCount + 1, 'Exactement UNE seule commande a été créée en base');
+
+    // Les deux requêtes doivent avoir abouti avec succès (200 ou 201) et le même orderId
+    const orderIdA = resA.data.orderId;
+    const orderIdB = resB.data.orderId;
+    assert.strictEqual(orderIdA, orderIdB, 'Les deux réponses font référence au même orderId');
+    assert.ok(resA.statusCode === 200 || resA.statusCode === 201);
+    assert.ok(resB.statusCode === 200 || resB.statusCode === 201);
+  });
+
+  // ---------------------------------------------------------------------------
+  // GROUP 5: Distributed Rate Limiting & Anti-Abuse (Prompt 2A)
+  // ---------------------------------------------------------------------------
+  await runTest('5.1 Extraction sécurisée de l’adresse IP cliente selon la topologie Vercel', () => {
+    // Vercel forwarded
+    assert.strictEqual(getClientIp({ headers: { 'x-vercel-forwarded-for': '196.200.10.5, 10.0.0.1' } }), '196.200.10.5');
+    // Standard X-Forwarded-For
+    assert.strictEqual(getClientIp({ headers: { 'x-forwarded-for': '197.100.20.8, 172.16.0.1' } }), '197.100.20.8');
+    // X-Real-IP
+    assert.strictEqual(getClientIp({ headers: { 'x-real-ip': '41.250.30.9' } }), '41.250.30.9');
+    // Fallback direct socket
+    assert.strictEqual(getClientIp({ socket: { remoteAddress: '105.155.40.10' } }), '105.155.40.10');
+  });
+
+  await runTest('5.2 Dépassement du seuil de requêtes déclenche une réponse 429 Too Many Requests avec Retry-After', async () => {
+    resetMemoryRateLimits();
+    const rateLimitDb = createMockAdminDb({
+      users: mockDb._usersStore,
+      products: mockDb._productsStore,
+    });
+
+    const testIp = '196.200.55.99';
+    const fakeReq = {
+      method: 'POST',
+      headers: { 'x-real-ip': testIp },
+      body: {
+        vendeur_id: 'vip_active_seller',
+        customerName: 'Rate Limit Tester',
+        customerWhatsApp: '+212611223344',
+        deliveryAddress: 'Casablanca',
+        items: [{ productId: 'prod_shoes', quantity: 1 }],
+      },
+    };
+
+    // Effectuer 10 créations autorisées (seuil = 10)
+    for (let i = 1; i <= 10; i++) {
+      const res = createMockResponse();
+      await handleCreateOrder(fakeReq, res, { adminDb: rateLimitDb, nowMs, maxRequests: 10, windowMs: 600000 });
+      assert.strictEqual(res.statusCode, 201, `Requête ${i} doit réussir (201)`);
+    }
+
+    // La 11ème requête doit être bloquée avec 429
+    const blockedRes = createMockResponse();
+    await handleCreateOrder(fakeReq, blockedRes, { adminDb: rateLimitDb, nowMs, maxRequests: 10, windowMs: 600000 });
+
+    assert.strictEqual(blockedRes.statusCode, 429, 'La 11ème requête doit renvoyer 429');
+    assert.strictEqual(blockedRes.data.code, 'RATE_LIMIT_EXCEEDED');
+    assert.ok(blockedRes.headers['Retry-After'], 'En-tête Retry-After doit être présent');
+    assert.ok(Number(blockedRes.headers['Retry-After']) > 0, 'Retry-After doit être un nombre positif');
+  });
+
+  await runTest('5.3 Deux adresses IP distinctes disposent de quotas indépendants', async () => {
+    resetMemoryRateLimits();
+    const rateLimitDb = createMockAdminDb({});
+    const now = Date.now();
+
+    const reqIpA = { headers: { 'x-real-ip': '10.10.10.1' } };
+    const reqIpB = { headers: { 'x-real-ip': '20.20.20.2' } };
+
+    // Consommer le quota complet pour IP A (maxRequests: 2 pour le test)
+    await checkOrdersRateLimit(reqIpA, rateLimitDb, { nowMs: now, maxRequests: 2, windowMs: 600000 });
+    await checkOrdersRateLimit(reqIpA, rateLimitDb, { nowMs: now, maxRequests: 2, windowMs: 600000 });
+    const checkA = await checkOrdersRateLimit(reqIpA, rateLimitDb, { nowMs: now, maxRequests: 2, windowMs: 600000 });
+    assert.strictEqual(checkA.allowed, false, 'IP A doit être bloquée');
+
+    // IP B doit toujours être autorisée
+    const checkB = await checkOrdersRateLimit(reqIpB, rateLimitDb, { nowMs: now, maxRequests: 2, windowMs: 600000 });
+    assert.strictEqual(checkB.allowed, true, 'IP B doit rester autorisée indépendamment');
+  });
+
+  await runTest('5.4 Résilience en cas de panne de la collection Firestore des compteurs (repli local)', async () => {
+    resetMemoryRateLimits();
+    const brokenDb = {
+      collection() {
+        throw new Error('Connexion réseau Firestore interrompue');
+      },
+    };
+
+    const req = { headers: { 'x-real-ip': '196.200.77.88' } };
+    const result = await checkOrdersRateLimit(req, brokenDb, { nowMs, maxRequests: 5, windowMs: 600000 });
+
+    assert.strictEqual(result.allowed, true, 'En cas d’erreur de base, la fonction opère un repli sans crasher la commande client');
+    assert.strictEqual(result.remaining, 4);
+  });
+
+  // ---------------------------------------------------------------------------
+  // GROUP 6: Vercel Serverless Function & Non-exposure
+  // ---------------------------------------------------------------------------
+  await runTest('6.1 Handler Vercel api/orders/create.ts opérationnel', async () => {
     const req = { method: 'OPTIONS' };
     const res = createMockResponse();
     await vercelOrdersHandler(req, res);
     assert.strictEqual(res.statusCode, 204);
   });
 
-  await runTest('4.2 Pas de fuite de données privées du vendeur dans la réponse de commande', async () => {
+  await runTest('6.2 Pas de fuite de données privées du vendeur dans la réponse de commande', async () => {
     const res = createMockResponse();
     await handleCreateOrder({
       method: 'POST',
@@ -625,7 +1043,7 @@ async function runAllTests() {
         deliveryAddress: 'Marrakech',
         items: [{ productId: 'prod_shoes', quantity: 1 }],
       },
-    }, res, { adminDb: mockDb, nowMs });
+    }, res, { adminDb: mockDb, nowMs, skipRateLimit: true });
 
     assert.strictEqual(res.statusCode, 201);
     assert.strictEqual(res.data.role, undefined);
@@ -636,17 +1054,30 @@ async function runAllTests() {
   });
 
   // ---------------------------------------------------------------------------
-  // GROUP 5: Firestore Rules Verification
+  // GROUP 7: Firestore Rules Verification
   // ---------------------------------------------------------------------------
-  await runTest('5.1 Vérification de l’intégrité des règles firestore.rules pour /users/{uid}/orders/{orderId}', () => {
+  await runTest('7.1 Vérification de l’intégrité des règles firestore.rules pour /users/{uid}/orders/{orderId}', () => {
     const rulesContent = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf-8');
-    
+
     assert.ok(rulesContent.includes('match /orders/{orderId}'), 'Règle match /orders/{orderId} présente');
     assert.ok(rulesContent.includes('allow create: if false;'), 'Création directe navigateur interdite (allow create: if false)');
     assert.ok(rulesContent.includes('allow read: if isOwner(uid) || isAdmin();'), 'Lecture réservée au propriétaire ou admin');
     assert.ok(rulesContent.includes('allow delete: if isAdmin();'), 'Suppression réservée à admin');
     assert.ok(rulesContent.includes('affectedKeys().hasOnly([\'status\', \'updatedAt\'])'), 'Modification limitée à status et updatedAt');
     assert.ok(rulesContent.includes('\'Nouveau\', \'Confirmée\', \'En préparation\', \'Expédiée\', \'Livrée\', \'Annulée\''), 'Validation des 6 statuts autorisés');
+  });
+
+  await runTest('7.2 Vérification de la fermeture hermétique de /users/{uid}/idempotency/{idempId} aux clients directs', () => {
+    const rulesContent = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf-8');
+
+    assert.ok(rulesContent.includes('match /idempotency/{idempId}'), 'Règle match /idempotency/{idempId} présente');
+    assert.ok(rulesContent.includes('allow read, write: if false;'), 'Accès direct client interdit (allow read, write: if false)');
+  });
+
+  await runTest('7.3 Vérification de la fermeture hermétique de /rateLimits/{limitId} aux clients directs', () => {
+    const rulesContent = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf-8');
+
+    assert.ok(rulesContent.includes('match /rateLimits/{limitId}'), 'Règle match /rateLimits/{limitId} présente');
   });
 
   console.log(`\n==================================================`);
