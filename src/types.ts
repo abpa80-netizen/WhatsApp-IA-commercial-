@@ -18,6 +18,7 @@ export interface PublicStoreProfile {
   publicSlug: string;
   orderWhatsApp?: string; // Optional commercial contact for WhatsApp checkout if explicitly provided AND allowed
   allowCommercialContact?: boolean;
+  defaultDeliveryFee?: number; // Publicly visible seller-configured fee, validated again by server
   plan?: string;
   trialEndsAt?: string;
   vipEndsAt?: string;
@@ -32,6 +33,7 @@ export interface Vendeur {
   useLoginNumberAsPublic?: boolean; // Explicit opt-in: Use registered login WhatsApp number as public commercial contact
   commercialWhatsApp?: string; // Explicit public commercial phone number (distinct from private login)
   allowCommercialContact?: boolean; // Merchant explicitly authorises displaying commercial WhatsApp
+  defaultDeliveryFee?: number; // Seller-defined fee used by server-side structured orders
   name: string;
   slogan: string;
   location: string;
