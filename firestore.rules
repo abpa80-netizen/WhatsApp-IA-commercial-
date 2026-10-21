@@ -133,14 +133,12 @@ service cloud.firestore {
 
       // 4. Orders sub-collection: Scoped under users/{uid}/orders/{orderId}
       match /orders/{orderId} {
-        // Lecture réservée au vendeur propriétaire authentifié et à l’administrateur autorisé
         // Les lectures et changements de statut passent par l’API serveur qui revérifie l’abonnement VIP actif.
         allow read: if isAdmin();
 
         // Aucune création directe par le navigateur : la création publique passe par l’API serveur sécurisée
         allow create: if false;
 
-        // Modification limitée au statut et à la date de mise à jour, après validation des valeurs autorisées
         // Les changements du vendeur passent par l’API serveur, qui vérifie le VIP actif et le statut autorisé.
         allow update: if isAdmin();
 
