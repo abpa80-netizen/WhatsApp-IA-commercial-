@@ -5,178 +5,549 @@
       "description": "Profil vendeur ou administrateur de la plateforme SaaS WhatsApp Commercial AI",
       "type": "object",
       "properties": {
-        "uid": { "type": "string", "description": "UID Firebase Auth unique de l'utilisateur" },
-        "whatsappNumber": { "type": "string", "description": "Numéro WhatsApp du commerçant au format international", "maxLength": 32 },
-        "phoneNormalized": { "type": "string", "description": "Chiffres purs du numéro pour indexation et recherche", "maxLength": 20 },
-        "role": { "type": "string", "enum": ["seller", "admin"], "description": "Rôle de sécurité de l'utilisateur" },
-        "status": { "type": "string", "description": "Statut du compte : Actif, Inactif, Suspendu", "maxLength": 20 },
-        "plan": { "type": "string", "description": "Offre en cours : Essai, VIP, Gratuit", "maxLength": 20 },
-        "trialStartedAt": { "type": "string", "description": "Date ISO du début de la période d'essai gratuit" },
-        "trialEndsAt": { "type": "string", "description": "Date ISO d'expiration de l'essai" },
-        "vipStartedAt": { "type": "string", "description": "Date ISO d'activation de l'abonnement VIP" },
-        "vipEndsAt": { "type": "string", "description": "Date ISO de fin de l'abonnement VIP" },
-        "publicSlug": { "type": "string", "description": "Identifiant public unique de la boutique WhatsApp", "maxLength": 64 },
-        "name": { "type": "string", "description": "Nom commercial de la boutique", "maxLength": 100 },
-        "slogan": { "type": "string", "description": "Slogan ou message commercial", "maxLength": 200 },
-        "location": { "type": "string", "description": "Ville et pays du commerçant", "maxLength": 100 },
-        "logo": { "type": "string", "description": "URL Cloud Storage du logo de la boutique", "maxLength": 1024 },
-        "currency": { "type": "string", "enum": ["MAD", "CFA"], "description": "Devise principale de facturation" },
-        "defaultDeliveryFee": { "type": "number", "description": "Frais de livraison par défaut définis par le vendeur, vérifiés côté serveur", "minimum": 0, "maximum": 1000000 },
-        "createdAt": { "type": "string", "description": "Date de création du compte" },
-        "updatedAt": { "type": "string", "description": "Date de dernière modification" }
+        "uid": {
+          "type": "string",
+          "description": "UID Firebase Auth unique de l'utilisateur"
+        },
+        "whatsappNumber": {
+          "type": "string",
+          "description": "Numéro WhatsApp du commerçant au format international",
+          "maxLength": 32
+        },
+        "phoneNormalized": {
+          "type": "string",
+          "description": "Chiffres purs du numéro pour indexation et recherche",
+          "maxLength": 20
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "seller",
+            "admin"
+          ],
+          "description": "Rôle de sécurité de l'utilisateur"
+        },
+        "status": {
+          "type": "string",
+          "description": "Statut du compte : Actif, Inactif, Suspendu",
+          "maxLength": 20
+        },
+        "plan": {
+          "type": "string",
+          "description": "Offre en cours : Essai, VIP, Gratuit",
+          "maxLength": 20
+        },
+        "trialStartedAt": {
+          "type": "string",
+          "description": "Date ISO du début de la période d'essai gratuit"
+        },
+        "trialEndsAt": {
+          "type": "string",
+          "description": "Date ISO d'expiration de l'essai"
+        },
+        "vipStartedAt": {
+          "type": "string",
+          "description": "Date ISO d'activation de l'abonnement VIP"
+        },
+        "vipEndsAt": {
+          "type": "string",
+          "description": "Date ISO de fin de l'abonnement VIP"
+        },
+        "publicSlug": {
+          "type": "string",
+          "description": "Identifiant public unique de la boutique WhatsApp",
+          "maxLength": 64
+        },
+        "name": {
+          "type": "string",
+          "description": "Nom commercial de la boutique",
+          "maxLength": 100
+        },
+        "slogan": {
+          "type": "string",
+          "description": "Slogan ou message commercial",
+          "maxLength": 200
+        },
+        "location": {
+          "type": "string",
+          "description": "Ville et pays du commerçant",
+          "maxLength": 100
+        },
+        "logo": {
+          "type": "string",
+          "description": "URL Cloud Storage du logo de la boutique",
+          "maxLength": 1024
+        },
+        "currency": {
+          "type": "string",
+          "enum": [
+            "MAD",
+            "CFA"
+          ],
+          "description": "Devise principale de facturation"
+        },
+        "defaultDeliveryFee": {
+          "type": "number",
+          "description": "Frais de livraison par défaut définis par le vendeur, vérifiés côté serveur",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Date de création du compte"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Date de dernière modification"
+        }
       },
-      "required": ["uid", "whatsappNumber", "phoneNormalized", "role", "status", "plan", "createdAt"]
+      "required": [
+        "uid",
+        "whatsappNumber",
+        "phoneNormalized",
+        "role",
+        "status",
+        "plan",
+        "createdAt"
+      ]
     },
     "Product": {
       "title": "Product",
       "description": "Article individuel au catalogue d'un vendeur",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "ID unique du produit" },
-        "vendeur_id": { "type": "string", "description": "UID Firebase du vendeur propriétaire" },
-        "name": { "type": "string", "description": "Nom du produit", "maxLength": 120 },
-        "price": { "type": "number", "description": "Prix actuel de vente" },
-        "original_price": { "type": "number", "description": "Prix barré optionnel pour promotion" },
-        "description": { "type": "string", "description": "Description commerciale vendeuse", "maxLength": 2000 },
-        "images": { "type": "array", "description": "URLs Cloud Storage des photos produits" },
-        "category": { "type": "string", "description": "Catégorie de l'article", "maxLength": 80 },
-        "clicks": { "type": "number", "description": "Nombre de clics enregistrés sur la fiche" },
-        "createdAt": { "type": "string", "description": "Date ISO de création" },
-        "updatedAt": { "type": "string", "description": "Date ISO de mise à jour" }
+        "id": {
+          "type": "string",
+          "description": "ID unique du produit"
+        },
+        "vendeur_id": {
+          "type": "string",
+          "description": "UID Firebase du vendeur propriétaire"
+        },
+        "name": {
+          "type": "string",
+          "description": "Nom du produit",
+          "maxLength": 120
+        },
+        "price": {
+          "type": "number",
+          "description": "Prix actuel de vente"
+        },
+        "original_price": {
+          "type": "number",
+          "description": "Prix barré optionnel pour promotion"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description commerciale vendeuse",
+          "maxLength": 2000
+        },
+        "images": {
+          "type": "array",
+          "description": "URLs Cloud Storage des photos produits"
+        },
+        "category": {
+          "type": "string",
+          "description": "Catégorie de l'article",
+          "maxLength": 80
+        },
+        "clicks": {
+          "type": "number",
+          "description": "Nombre de clics enregistrés sur la fiche"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Date ISO de création"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Date ISO de mise à jour"
+        }
       },
-      "required": ["id", "vendeur_id", "name", "price", "description", "images"]
+      "required": [
+        "id",
+        "vendeur_id",
+        "name",
+        "price",
+        "description",
+        "images"
+      ]
     },
     "Prospect": {
       "title": "Prospect",
       "description": "Fiche contact client CRM pour suivi commercial WhatsApp",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "ID unique du contact prospect" },
-        "vendeur_id": { "type": "string", "description": "UID Firebase du vendeur gestionnaire" },
-        "name": { "type": "string", "description": "Nom du client ou prospect", "maxLength": 100 },
-        "phone": { "type": "string", "description": "Numéro WhatsApp du client", "maxLength": 32 },
-        "notes": { "type": "string", "description": "Notes commerciales ou préférences", "maxLength": 2000 },
-        "status": { "type": "string", "enum": ["Nouveau", "Intéressé", "À relancer", "Converti", "Perdu"], "description": "Étape du pipeline de vente" },
-        "createdAt": { "type": "string", "description": "Date d'ajout au CRM" },
-        "last_contact": { "type": "string", "description": "Date ISO du dernier message envoyé" }
+        "id": {
+          "type": "string",
+          "description": "ID unique du contact prospect"
+        },
+        "vendeur_id": {
+          "type": "string",
+          "description": "UID Firebase du vendeur gestionnaire"
+        },
+        "name": {
+          "type": "string",
+          "description": "Nom du client ou prospect",
+          "maxLength": 100
+        },
+        "phone": {
+          "type": "string",
+          "description": "Numéro WhatsApp du client",
+          "maxLength": 32
+        },
+        "notes": {
+          "type": "string",
+          "description": "Notes commerciales ou préférences",
+          "maxLength": 2000
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "Nouveau",
+            "Intéressé",
+            "À relancer",
+            "Converti",
+            "Perdu"
+          ],
+          "description": "Étape du pipeline de vente"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Date d'ajout au CRM"
+        },
+        "last_contact": {
+          "type": "string",
+          "description": "Date ISO du dernier message envoyé"
+        }
       },
-      "required": ["id", "vendeur_id", "name", "phone", "status"]
+      "required": [
+        "id",
+        "vendeur_id",
+        "name",
+        "phone",
+        "status"
+      ]
     },
     "PublicStore": {
       "title": "PublicStore",
       "description": "Profil public vitrine exposé aux visiteurs du catalogue (sans données privées ni dates d'abonnement)",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "UID Firebase du vendeur propriétaire" },
-        "name": { "type": "string", "description": "Nom commercial public de la boutique", "maxLength": 100 },
-        "slogan": { "type": "string", "description": "Slogan commercial", "maxLength": 200 },
-        "location": { "type": "string", "description": "Localisation publique", "maxLength": 100 },
-        "logo": { "type": "string", "description": "URL du logo de la boutique", "maxLength": 1024 },
-        "currency": { "type": "string", "enum": ["MAD", "CFA"], "description": "Devise de la boutique" },
-        "defaultDeliveryFee": { "type": "number", "description": "Tarif de livraison public synchronisé depuis le profil privé du vendeur", "minimum": 0, "maximum": 1000000 },
-        "is_active": { "type": "boolean", "description": "Boutique active ou suspendue" },
-        "hasFullCatalog": { "type": "boolean", "description": "Accès au catalogue complet ou restreint à 4 produits" },
-        "isVipActive": { "type": "boolean", "description": "Indique si le badge public VIP est actif, sans exposer les dates privées" },
-        "publicSlug": { "type": "string", "description": "Slug d'accès public", "maxLength": 64 },
-        "orderWhatsApp": { "type": "string", "description": "Numéro commercial de commande consenti", "maxLength": 32 },
-        "allowCommercialContact": { "type": "boolean", "description": "Consentement explicite du contact commercial" },
-        "updatedAt": { "type": "string", "description": "Date ISO de mise à jour" }
+        "id": {
+          "type": "string",
+          "description": "UID Firebase du vendeur propriétaire"
+        },
+        "name": {
+          "type": "string",
+          "description": "Nom commercial public de la boutique",
+          "maxLength": 100
+        },
+        "slogan": {
+          "type": "string",
+          "description": "Slogan commercial",
+          "maxLength": 200
+        },
+        "location": {
+          "type": "string",
+          "description": "Localisation publique",
+          "maxLength": 100
+        },
+        "logo": {
+          "type": "string",
+          "description": "URL du logo de la boutique",
+          "maxLength": 1024
+        },
+        "currency": {
+          "type": "string",
+          "enum": [
+            "MAD",
+            "CFA"
+          ],
+          "description": "Devise de la boutique"
+        },
+        "defaultDeliveryFee": {
+          "type": "number",
+          "description": "Tarif de livraison public synchronisé depuis le profil privé du vendeur",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "is_active": {
+          "type": "boolean",
+          "description": "Boutique active ou suspendue"
+        },
+        "hasFullCatalog": {
+          "type": "boolean",
+          "description": "Accès au catalogue complet ou restreint à 4 produits"
+        },
+        "isVipActive": {
+          "type": "boolean",
+          "description": "Indique si le badge public VIP est actif, sans exposer les dates privées"
+        },
+        "publicSlug": {
+          "type": "string",
+          "description": "Slug d'accès public",
+          "maxLength": 64
+        },
+        "orderWhatsApp": {
+          "type": "string",
+          "description": "Numéro commercial de commande consenti",
+          "maxLength": 32
+        },
+        "allowCommercialContact": {
+          "type": "boolean",
+          "description": "Consentement explicite du contact commercial"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Date ISO de mise à jour"
+        }
       },
-      "required": ["id", "name", "currency", "publicSlug", "updatedAt"]
+      "required": [
+        "id",
+        "name",
+        "currency",
+        "publicSlug",
+        "updatedAt"
+      ]
     },
     "GlobalSettings": {
       "title": "GlobalSettings",
       "description": "Paramètres globaux de la plateforme SaaS WhatsApp Commercial AI",
       "type": "object",
       "properties": {
-        "trialDays": { "type": "number", "description": "Nombre de jours d'essai gratuit offert aux nouveaux vendeurs" },
-        "vipPrice": { "type": "number", "description": "Tarif de l'abonnement VIP (MAD)" },
-        "vipPriceCfa": { "type": "number", "description": "Tarif de l'abonnement VIP (FCFA)" },
-        "supportWhatsapp": { "type": "string", "description": "Numéro WhatsApp de support de la plateforme", "maxLength": 32 },
-        "freeProductLimit": { "type": "number", "description": "Plafond maximum de produits autorisés en mode Gratuit (défaut 4)" },
-        "updatedAt": { "type": "string", "description": "Date ISO de la dernière modification" }
+        "trialDays": {
+          "type": "number",
+          "description": "Nombre de jours d'essai gratuit offert aux nouveaux vendeurs"
+        },
+        "vipPrice": {
+          "type": "number",
+          "description": "Tarif de l'abonnement VIP (MAD)"
+        },
+        "vipPriceCfa": {
+          "type": "number",
+          "description": "Tarif de l'abonnement VIP (FCFA)"
+        },
+        "supportWhatsapp": {
+          "type": "string",
+          "description": "Numéro WhatsApp de support de la plateforme",
+          "maxLength": 32
+        },
+        "freeProductLimit": {
+          "type": "number",
+          "description": "Plafond maximum de produits autorisés en mode Gratuit (défaut 4)"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Date ISO de la dernière modification"
+        }
       },
-      "required": ["trialDays", "vipPrice", "supportWhatsapp", "freeProductLimit"]
+      "required": [
+        "trialDays",
+        "vipPrice",
+        "supportWhatsapp",
+        "freeProductLimit"
+      ]
     },
     "AnalyticsEvent": {
       "title": "AnalyticsEvent",
       "description": "Événement de métrique pour trafic, clics et commandes WhatsApp",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "ID de l'événement" },
-        "vendeur_id": { "type": "string", "description": "UID du vendeur concerné" },
-        "type": { "type": "string", "enum": ["view", "product_click", "conversion"], "description": "Type d'événement" },
-        "productId": { "type": "string", "description": "ID du produit concerné" },
-        "timestamp": { "type": "string", "description": "Horodatage de l'événement" },
-        "source": { "type": "string", "description": "Origine du suivi analytique pour distinguer les événements vérifiés des anciennes données" }
+        "id": {
+          "type": "string",
+          "description": "ID de l'événement"
+        },
+        "vendeur_id": {
+          "type": "string",
+          "description": "UID du vendeur concerné"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "view",
+            "product_click",
+            "conversion"
+          ],
+          "description": "Type d'événement"
+        },
+        "productId": {
+          "type": "string",
+          "description": "ID du produit concerné"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "Horodatage de l'événement"
+        },
+        "source": {
+          "type": "string",
+          "description": "Origine du suivi analytique pour distinguer les événements vérifiés des anciennes données"
+        }
       },
-      "required": ["id", "vendeur_id", "type", "timestamp"]
+      "required": [
+        "id",
+        "vendeur_id",
+        "type",
+        "timestamp"
+      ]
     },
     "StructuredOrder": {
       "title": "StructuredOrder",
-      "description": "Commande structurée passée auprès d'une boutique VIP active",
+      "description": "Commande structurée créée côté serveur pour une boutique VIP active",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "ID unique de la commande" },
-        "vendeur_id": { "type": "string", "description": "UID Firebase du vendeur propriétaire" },
-        "customerName": { "type": "string", "description": "Nom complet du client", "maxLength": 100 },
-        "customerWhatsApp": { "type": "string", "description": "Numéro WhatsApp du client", "maxLength": 32 },
-        "deliveryAddress": { "type": "string", "description": "Adresse de livraison", "maxLength": 250 },
+        "id": {
+          "type": "string",
+          "description": "Identifiant de commande"
+        },
+        "vendeur_id": {
+          "type": "string",
+          "description": "UID Firebase du vendeur propriétaire"
+        },
+        "customerName": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "customerWhatsApp": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "deliveryAddress": {
+          "type": "string",
+          "maxLength": 250
+        },
         "items": {
           "type": "array",
-          "description": "Articles commandés avec quantités et prix vérifiés côté serveur",
           "items": {
             "type": "object",
             "properties": {
-              "productId": { "type": "string" },
-              "name": { "type": "string" },
-              "price": { "type": "number" },
-              "quantity": { "type": "number" },
-              "total": { "type": "number" },
-              "image": { "type": "string" }
+              "productId": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "price": {
+                "type": "number"
+              },
+              "quantity": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "total": {
+                "type": "number"
+              },
+              "image": {
+                "type": "string"
+              }
             },
-            "required": ["productId", "name", "price", "quantity", "total"]
+            "required": [
+              "productId",
+              "name",
+              "price",
+              "quantity",
+              "total"
+            ]
           }
         },
-        "subtotal": { "type": "number", "description": "Sous-total calculé côté serveur" },
-        "deliveryFee": { "type": "number", "description": "Frais de livraison" },
-        "total": { "type": "number", "description": "Montant total de la commande calculé côté serveur" },
-        "currency": { "type": "string", "enum": ["MAD", "CFA"], "description": "Devise de la commande" },
-        "status": { "type": "string", "enum": ["Nouveau", "Confirmée", "En préparation", "Expédiée", "Livrée", "Annulée"], "description": "Statut de traitement" },
-        "createdAt": { "type": "string", "description": "Date ISO de création" },
-        "updatedAt": { "type": "string", "description": "Date ISO de dernière mise à jour" },
-        "notes": { "type": "string", "description": "Notes de commande facultatives", "maxLength": 1000 }
+        "subtotal": {
+          "type": "number"
+        },
+        "deliveryFee": {
+          "type": "number",
+          "minimum": 0
+        },
+        "total": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string",
+          "enum": [
+            "MAD",
+            "CFA"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "Nouveau",
+            "Confirmée",
+            "En préparation",
+            "Expédiée",
+            "Livrée",
+            "Annulée"
+          ]
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 1000
+        }
       },
-      "required": ["id", "vendeur_id", "customerName", "customerWhatsApp", "deliveryAddress", "items", "subtotal", "total", "currency", "status", "createdAt", "updatedAt"]
+      "required": [
+        "id",
+        "vendeur_id",
+        "customerName",
+        "customerWhatsApp",
+        "deliveryAddress",
+        "items",
+        "subtotal",
+        "deliveryFee",
+        "total",
+        "currency",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
     "/users/{uid}": {
-      "schema": { "$ref": "#/entities/User" },
+      "schema": {
+        "$ref": "#/entities/User"
+      },
       "description": "Comptes vendeurs et administrateurs (profil privé)"
     },
     "/publicStores/{uid}": {
-      "schema": { "$ref": "#/entities/PublicStore" },
+      "schema": {
+        "$ref": "#/entities/PublicStore"
+      },
       "description": "Informations publiques du catalogue et de la vitrine vendeur"
     },
     "/users/{uid}/products/{productId}": {
-      "schema": { "$ref": "#/entities/Product" },
+      "schema": {
+        "$ref": "#/entities/Product"
+      },
       "description": "Catalogue de produits isolé par vendeur"
     },
     "/users/{uid}/prospects/{prospectId}": {
-      "schema": { "$ref": "#/entities/Prospect" },
+      "schema": {
+        "$ref": "#/entities/Prospect"
+      },
       "description": "Contacts CRM isolés par vendeur"
     },
     "/users/{uid}/orders/{orderId}": {
-      "schema": { "$ref": "#/entities/StructuredOrder" },
+      "schema": {
+        "$ref": "#/entities/StructuredOrder"
+      },
       "description": "Commandes structurées de la boutique VIP"
     },
     "/settings/global": {
-      "schema": { "$ref": "#/entities/GlobalSettings" },
+      "schema": {
+        "$ref": "#/entities/GlobalSettings"
+      },
       "description": "Configuration globale de la plateforme SaaS"
     },
     "/analytics/{eventId}": {
-      "schema": { "$ref": "#/entities/AnalyticsEvent" },
+      "schema": {
+        "$ref": "#/entities/AnalyticsEvent"
+      },
       "description": "Télémétrie anonymisée des boutiques"
     }
   }
