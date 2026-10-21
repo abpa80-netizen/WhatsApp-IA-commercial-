@@ -22,7 +22,9 @@ import {
   CurrencyType,
   PublicStoreProfile,
   AdminData,
-  DailyVisitStat
+  DailyVisitStat,
+  StructuredOrder,
+  OrderStatus
 } from '../types';
 
 // Default system config fallback
@@ -771,6 +773,59 @@ export const FirestoreService = {
       return true;
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, docPath);
+    }
+  },
+
+  // ----------------------------------------------------
+  // 5. USERS / {uid} / ORDERS / {orderId}
+  // ----------------------------------------------------
+  async getUserOrders(uid: string): Promise<StructuredOrder[]> {
+    const colPath = `users/${uid}/orders`;
+    try {
+      const snap = await getDocs(collection(db, 'users', uid, 'orders'));
+      const orders: StructuredOrder[] = [];
+      snap.forEach((docSnap) => {
+        const data = docSnap.data();
+        orders.push({
+          id: docSnap.id,
+          vendeur_id: uid,
+          customerName: String(data.customerName || ''),
+          customerWhatsApp: String(data.customerWhatsApp || ''),
+          deliveryAddress: String(data.deliveryAddress || ''),
+          items: Array.isArray(data.items) ? data.items : [],
+          subtotal: Number(data.subtotal || 0),
+          deliveryFee: Number(data.deliveryFee || 0),
+          total: Number(data.total || 0),
+          currency: data.currency === 'MAD' ? 'MAD' : 'CFA',
+          status: (data.status || 'Nouveau') as OrderStatus,
+          createdAt: normalizeStoredDate(data.createdAt) || '',
+          updatedAt: normalizeStoredDate(data.updatedAt) || normalizeStoredDate(data.createdAt) || '',
+          notes: typeof data.notes === 'string' ? data.notes : undefined,
+        });
+      });
+      return orders.sort((a, b) => {
+        const dateA = new Date(a.createdAt).getTime() || 0;
+        const dateB = new Date(b.createdAt).getTime() || 0;
+        return dateB - dateA;
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, colPath);
+    }
+  },
+
+  async updateUserOrderStatus(uid: string, orderId: string, status: OrderStatus): Promise<void> {
+    const docPath = `users/${uid}/orders/${orderId}`;
+    const allowedStatuses: OrderStatus[] = ['Nouveau', 'Confirmée', 'En préparation', 'Expédiée', 'Livrée', 'Annulée'];
+    if (!allowedStatuses.includes(status)) {
+      throw new Error('Statut de commande invalide.');
+    }
+    try {
+      await updateDoc(doc(db, 'users', uid, 'orders', orderId), {
+        status,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, docPath);
     }
   },
 
