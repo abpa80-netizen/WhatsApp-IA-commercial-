@@ -21,6 +21,7 @@ import { ProspectsCRM } from './components/ProspectsCRM';
 import { BrandingSettings } from './components/BrandingSettings';
 import { PublicStore } from './components/PublicStore';
 import { AdminPortal } from './components/AdminPortal';
+import { OrdersManager } from './components/OrdersManager';
 import { PWAInstallBanner } from './components/PWAInstaller';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { 
@@ -37,10 +38,11 @@ import {
   Menu,
   X,
   UserCheck,
-  ArrowLeft
+  ArrowLeft,
+  ClipboardList
 } from 'lucide-react';
 
-type ActiveTab = 'dashboard' | 'catalog' | 'ai' | 'crm' | 'branding';
+type ActiveTab = 'dashboard' | 'catalog' | 'ai' | 'crm' | 'orders' | 'branding';
 
 // Utility to inspect URL parameters and hash routes for instant public store / admin access
 const getInitialRouteInfo = () => {
@@ -709,6 +711,7 @@ function MainApp() {
     { id: 'catalog', label: 'Catalogue', icon: ShoppingBag, badge: products.length },
     { id: 'ai', label: 'Commercial IA', icon: Sparkles, highlight: true },
     { id: 'crm', label: 'CRM Prospects', icon: Users, badge: prospects.length },
+    { id: 'orders', label: 'Commandes VIP', icon: ClipboardList },
     { id: 'branding', label: 'Mon Profil & Sécurité', icon: UserCheck },
   ];
 
@@ -835,6 +838,10 @@ function MainApp() {
             initialProspectId={selectedAiProspectId}
             onOpenUpgradeModal={handleOpenVipModal}
           />
+        )}
+
+        {activeTab === 'orders' && (
+          <OrdersManager vendeur={activeVendeur} />
         )}
 
         {activeTab === 'crm' && (
