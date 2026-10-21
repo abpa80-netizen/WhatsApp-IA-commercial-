@@ -681,6 +681,7 @@ async function runAllTests() {
   });
 
   await runTest('3.2 Commande nominale avec VIP actif : succès 201 et sauvegarde conforme dans Firestore', async () => {
+    mockDb._usersStore['vip_active_seller'].defaultDeliveryFee = 35;
     const res = createMockResponse();
     await handleCreateOrder({
       method: 'POST',
@@ -759,6 +760,7 @@ async function runAllTests() {
   });
 
   await runTest('3.4 VIP Indéfini (sans vipEndsAt) et devise CFA acceptés avec exactitude', async () => {
+    mockDb._usersStore['vip_indefinite_seller'].defaultDeliveryFee = 1500;
     const res = createMockResponse();
     await handleCreateOrder({
       method: 'POST',
@@ -997,6 +999,10 @@ async function runAllTests() {
         items: [{ productId: 'prod_shoes', quantity: 1 }],
       };
 
+      // Configure the seller-side fee, which is the only trusted delivery-fee source.
+      const originalFee = mockDb._usersStore['vip_active_seller'].defaultDeliveryFee;
+      mockDb._usersStore['vip_active_seller'].defaultDeliveryFee = fieldName === 'deliveryFee' ? 25 : 0;
+
       // Création originale
       const resInit = createMockResponse();
       await handleCreateOrder({ method: 'POST', body: { ...baseBody } }, resInit, { adminDb: mockDb, nowMs, skipRateLimit: true });
@@ -1004,11 +1010,13 @@ async function runAllTests() {
 
       // Modification du champ testé avec la même clé
       const modifiedBody = payloadModifier({ ...baseBody });
+      if (fieldName === 'deliveryFee') mockDb._usersStore['vip_active_seller'].defaultDeliveryFee = 40;
       const resConflict = createMockResponse();
       await handleCreateOrder({ method: 'POST', body: modifiedBody }, resConflict, { adminDb: mockDb, nowMs, skipRateLimit: true });
 
       assert.strictEqual(resConflict.statusCode, 409, `Le champ "${fieldName}" altéré doit déclencher une 409`);
       assert.strictEqual(resConflict.data.code, 'IDEMPOTENCY_CONFLICT');
+      mockDb._usersStore['vip_active_seller'].defaultDeliveryFee = originalFee;
     };
 
     await checkFieldConflict('customerName', (b) => ({ ...b, customerName: 'Yassine Bennani' }));
