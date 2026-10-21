@@ -1364,9 +1364,9 @@ async function runAllTests() {
 
     assert.ok(rulesContent.includes('match /orders/{orderId}'), 'Règle match /orders/{orderId} présente');
     assert.ok(rulesContent.includes('allow create: if false;'), 'Création directe navigateur interdite (allow create: if false)');
-    assert.ok(rulesContent.includes('allow read: if isOwner(uid) || isAdmin();'), 'Lecture réservée au propriétaire ou admin');
+    assert.ok(rulesContent.includes('allow read: if isAdmin();'), 'Lecture directe vendeur bloquée; les lectures vendeur passent par API VIP');
     assert.ok(rulesContent.includes('allow delete: if isAdmin();'), 'Suppression réservée à admin');
-    assert.ok(rulesContent.includes('affectedKeys().hasOnly([\'status\', \'updatedAt\'])'), 'Modification limitée à status et updatedAt');
+    assert.ok(rulesContent.includes('allow update: if isAdmin();'), 'Modification directe vendeur bloquée; les changements passent par API VIP');
     assert.ok(rulesContent.includes('\'Nouveau\', \'Confirmée\', \'En préparation\', \'Expédiée\', \'Livrée\', \'Annulée\''), 'Validation des 6 statuts autorisés');
   });
 
