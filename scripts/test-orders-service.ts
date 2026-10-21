@@ -1217,6 +1217,30 @@ async function runAllTests() {
   });
 
   // ---------------------------------------------------------------------------
+  await runTest('4.12 Un rejeu de commande est refusé dès que le VIP expire', async () => {
+    const key = 'vip_expiry_replay_key_778';
+    const body = {
+      vendeur_id: 'vip_active_seller',
+      customerName: 'Client VIP',
+      customerWhatsApp: '+212600123456',
+      deliveryAddress: 'Rabat',
+      deliveryFee: 0,
+      idempotencyKey: key,
+      items: [{ productId: 'prod_shoes', quantity: 1 }],
+    };
+    const original = { ...mockDb._usersStore['vip_active_seller'] };
+    const first = createMockResponse();
+    await handleCreateOrder({ method: 'POST', body }, first, { adminDb: mockDb, nowMs, skipRateLimit: true });
+    assert.strictEqual(first.statusCode, 201);
+
+    mockDb._usersStore['vip_active_seller'].vipEndsAt = new Date(nowMs - day).toISOString();
+    const replay = createMockResponse();
+    await handleCreateOrder({ method: 'POST', body }, replay, { adminDb: mockDb, nowMs, skipRateLimit: true });
+    assert.strictEqual(replay.statusCode, 403);
+    assert.strictEqual(replay.data.code, 'VIP_EXPIRED');
+    mockDb._usersStore['vip_active_seller'] = original;
+  });
+
   // GROUP 5: Distributed Rate Limiting & Anti-Abuse (Prompt 2A)
   // ---------------------------------------------------------------------------
   await runTest('5.1 Extraction sécurisée de l’adresse IP cliente selon la topologie Vercel', () => {
