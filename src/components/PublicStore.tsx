@@ -63,13 +63,15 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
   // Handle hardware / browser back button to close product modal
   useEffect(() => {
     const handlePopState = () => {
-      if (selectedProduct) {
+      if (checkoutProduct) {
+        setCheckoutProduct(null);
+      } else if (selectedProduct) {
         setSelectedProduct(null);
       }
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [selectedProduct]);
+  }, [selectedProduct, checkoutProduct]);
 
   // Determine product limit:
   // - Priority 1: minimal public activation flag 'hasFullCatalog' (no private dates exposed)
@@ -681,6 +683,7 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
                   onClick={() => {
                     setCheckoutProduct(selectedProduct);
                     setSelectedProduct(null);
+                    window.history.pushState({ modal: 'structured_order' }, '');
                   }}
                   className="w-full flex items-center justify-center gap-2 bg-slate-950 hover:bg-slate-800 active:scale-98 text-white font-bold py-3.5 px-4 rounded-xl shadow-md text-sm transition-all"
                 >
@@ -711,7 +714,10 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
           currency={vendeur.currency}
           products={products}
           initialProduct={checkoutProduct}
-          onClose={() => setCheckoutProduct(null)}
+          onClose={() => {
+            setCheckoutProduct(null);
+            if (window.history.state?.modal === 'structured_order') window.history.back();
+          }}
         />
       )}
     </div>
