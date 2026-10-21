@@ -724,6 +724,7 @@ async function runAllTests() {
     assert.strictEqual(savedOrder.items[0].quantity, 2);
     assert.strictEqual(savedOrder.items[0].total, 900);
     assert.strictEqual(savedOrder.items[0].image, 'https://res.cloudinary.com/test/shoes.webp');
+    mockDb._usersStore['vip_active_seller'].defaultDeliveryFee = 0;
   });
 
   await runTest('3.3 Sécurité absolue : les prix et totaux manipulés par le client sont IGNORÉS', async () => {
@@ -781,6 +782,7 @@ async function runAllTests() {
     assert.strictEqual(res.data.subtotal, 15000);
     assert.strictEqual(res.data.deliveryFee, 1500);
     assert.strictEqual(res.data.total, 16500);
+    mockDb._usersStore['vip_indefinite_seller'].defaultDeliveryFee = 0;
   });
 
   // ---------------------------------------------------------------------------
