@@ -8,7 +8,9 @@ import {
   CurrencyType,
   AuthResponse,
   PublicStoreProfile,
-  DailyVisitStat
+  DailyVisitStat,
+  StructuredOrder,
+  OrderStatus
 } from '../types';
 import { FirestoreService, DEFAULT_GLOBAL_SETTINGS } from './firestoreService';
 import { AuthService } from './authService';
@@ -265,6 +267,22 @@ export const ApiService = {
     const cleanId = vendeurId.trim();
     this.ensureAuthenticatedOwner(cleanId);
     return await FirestoreService.deleteUserProspect(cleanId, prospectId);
+  },
+
+  // 9b. Structured VIP Orders (private owner scope)
+  async getOrders(vendeurId: string): Promise<StructuredOrder[]> {
+    const cleanId = vendeurId.trim();
+    this.ensureAuthenticatedOwner(cleanId);
+    return await FirestoreService.getUserOrders(cleanId);
+  },
+
+  async updateOrderStatus(vendeurId: string, orderId: string, status: OrderStatus): Promise<void> {
+    const cleanId = vendeurId.trim();
+    this.ensureAuthenticatedOwner(cleanId);
+    if (!orderId || orderId.length > 128 || !/^[a-zA-Z0-9_\-]+$/.test(orderId)) {
+      throw new Error('Identifiant de commande invalide.');
+    }
+    await FirestoreService.updateUserOrderStatus(cleanId, orderId, status);
   },
 
   // 10. Metrics tracking
