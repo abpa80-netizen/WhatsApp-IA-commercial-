@@ -68,6 +68,14 @@
       "destination": "/api/orders/create"
     },
     {
+      "source": "/api/orders/list",
+      "destination": "/api/orders/list"
+    },
+    {
+      "source": "/api/orders/update-status",
+      "destination": "/api/orders/update-status"
+    },
+    {
       "source": "/api/admin/recalculate-entitlements",
       "destination": "/api/admin/recalculate-entitlements"
     },
