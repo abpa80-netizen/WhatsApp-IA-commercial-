@@ -790,6 +790,7 @@ async function runAllTests() {
   // GROUP 4: Idempotency Protection (Prompt 2A)
   // ---------------------------------------------------------------------------
   await runTest('4.1 Création initiale avec idempotencyKey enregistre le document d’idempotence', async () => {
+    mockDb._usersStore['vip_active_seller'].defaultDeliveryFee = 20;
     const res = createMockResponse();
     const idempKey = 'order_test_key_001_initial';
 
@@ -841,6 +842,7 @@ async function runAllTests() {
     assert.strictEqual(resReplay.statusCode, 200, 'Statut 200 renvoyé pour le rejeu idempotent');
     assert.strictEqual(resReplay.data.replayed, true, 'Indicateur replayed: true retourné');
     assert.strictEqual(resReplay.data.total, 470);
+    mockDb._usersStore['vip_active_seller'].defaultDeliveryFee = 0;
 
     const finalOrdersCount = Object.keys(mockDb._ordersStore['vip_active_seller'] || {}).length;
     assert.strictEqual(finalOrdersCount, initialOrdersCount, 'AUCUNE nouvelle commande créée dans Firestore');
