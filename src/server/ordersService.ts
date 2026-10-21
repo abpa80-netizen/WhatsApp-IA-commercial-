@@ -661,13 +661,22 @@ export async function handleCreateOrder(req: any, res: any, options?: CreateOrde
 
 
 
+      // Delivery fees are authoritative seller settings. Never trust a fee submitted by a public customer.
+      const configuredDeliveryFee = userDoc.defaultDeliveryFee === undefined || userDoc.defaultDeliveryFee === null
+        ? 0
+        : Number(userDoc.defaultDeliveryFee);
+      if (!Number.isFinite(configuredDeliveryFee) || configuredDeliveryFee < 0 || configuredDeliveryFee > 1000000) {
+        throw new OrderProcessError(500, 'VENDOR_DELIVERY_FEE_INVALID', 'Les frais de livraison configurés par la boutique sont invalides. Veuillez contacter le vendeur.');
+      }
+      const officialDeliveryFee = Math.round(configuredDeliveryFee * 100) / 100;
+
       // 6b. Deterministic Order Request Hash
       const requestHash = computeOrderRequestHash({
         customerName,
         customerWhatsApp,
         deliveryAddress,
         items,
-        deliveryFee,
+        deliveryFee: officialDeliveryFee,
         notes,
         currency,
       });
@@ -761,7 +770,7 @@ export async function handleCreateOrder(req: any, res: any, options?: CreateOrde
 
       // 6e. Calculate server-side totals
       const subtotal = Math.round(calculatedSubtotal * 100) / 100;
-      const finalDeliveryFee = Math.round(deliveryFee * 100) / 100;
+      const finalDeliveryFee = officialDeliveryFee;
       const total = Math.round((subtotal + finalDeliveryFee) * 100) / 100;
       const itemCount = orderItems.reduce((acc, curr) => acc + curr.quantity, 0);
 
