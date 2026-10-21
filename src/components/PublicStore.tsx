@@ -605,7 +605,7 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
               className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 px-3 sm:px-4 rounded-xl text-xs sm:text-sm shadow-md shrink-0 transition-all"
             >
               <ShoppingCart className="w-4 h-4" />
-              <span>Panier ({cartCount}) · {formatCurrency(cartTotal, vendeur.currency)}</span>
+              <span><span className="hidden sm:inline">Panier ({cartCount}) · {formatCurrency(cartTotal, vendeur.currency)}</span><span className="sm:hidden">Panier ({cartCount})</span></span>
             </button>
           )}
           <button
