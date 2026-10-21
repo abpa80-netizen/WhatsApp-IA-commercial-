@@ -360,7 +360,7 @@ export function computeOrderRequestHash(params: {
     customerWhatsApp: String(params.customerWhatsApp || '').trim().replace(/[^\d+]/g, ''),
     deliveryAddress: String(params.deliveryAddress || '').trim().replace(/\s+/g, ' '),
     deliveryFee: Math.round(Number(params.deliveryFee || 0) * 100) / 100,
-    notes: String(params.notes || '').trim().replace(/\\s+/g, ' '),
+    notes: String(params.notes || '').trim().replace(/\s+/g, ' '),
     items: normalizedItems,
   };
 
