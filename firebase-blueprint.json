@@ -21,6 +21,7 @@
         "location": { "type": "string", "description": "Ville et pays du commerçant", "maxLength": 100 },
         "logo": { "type": "string", "description": "URL Cloud Storage du logo de la boutique", "maxLength": 1024 },
         "currency": { "type": "string", "enum": ["MAD", "CFA"], "description": "Devise principale de facturation" },
+        "defaultDeliveryFee": { "type": "number", "description": "Frais de livraison par défaut définis par le vendeur, vérifiés côté serveur", "minimum": 0, "maximum": 1000000 },
         "createdAt": { "type": "string", "description": "Date de création du compte" },
         "updatedAt": { "type": "string", "description": "Date de dernière modification" }
       },
@@ -72,6 +73,7 @@
         "location": { "type": "string", "description": "Localisation publique", "maxLength": 100 },
         "logo": { "type": "string", "description": "URL du logo de la boutique", "maxLength": 1024 },
         "currency": { "type": "string", "enum": ["MAD", "CFA"], "description": "Devise de la boutique" },
+        "defaultDeliveryFee": { "type": "number", "description": "Tarif de livraison public synchronisé depuis le profil privé du vendeur", "minimum": 0, "maximum": 1000000 },
         "is_active": { "type": "boolean", "description": "Boutique active ou suspendue" },
         "hasFullCatalog": { "type": "boolean", "description": "Accès au catalogue complet ou restreint à 4 produits" },
         "isVipActive": { "type": "boolean", "description": "Indique si le badge public VIP est actif, sans exposer les dates privées" },
