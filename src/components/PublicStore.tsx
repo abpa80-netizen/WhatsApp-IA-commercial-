@@ -17,6 +17,7 @@ import { formatCurrency } from '../services/aiGenerator';
 import { ApiService } from '../services/api';
 import { useToast } from './Toast';
 import { getVendorEntitlements } from '../services/entitlements';
+import { StructuredOrderCheckout } from './StructuredOrderCheckout';
 
 interface PublicStoreProps {
   vendeur: Vendeur | PublicStoreProfile;
@@ -38,6 +39,7 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
+  const [checkoutProduct, setCheckoutProduct] = useState<Product | null>(null);
 
   // Track one shop view per browser session. Mark it only AFTER Firestore confirms the write.
   // Previously the session was marked before the async write, so a denied/failed write was never retried.
@@ -61,13 +63,15 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
   // Handle hardware / browser back button to close product modal
   useEffect(() => {
     const handlePopState = () => {
-      if (selectedProduct) {
+      if (checkoutProduct) {
+        setCheckoutProduct(null);
+      } else if (selectedProduct) {
         setSelectedProduct(null);
       }
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [selectedProduct]);
+  }, [selectedProduct, checkoutProduct]);
 
   // Determine product limit:
   // - Priority 1: minimal public activation flag 'hasFullCatalog' (no private dates exposed)
@@ -162,7 +166,7 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
   // Open a product directly when a shared product link includes ?product=<id>.
   // Direct links must count as product interest too, not only clicks on a product card.
   useEffect(() => {
-    if (typeof window === 'undefined' || selectedProduct || products.length === 0) return;
+    if (typeof window === 'undefined' || selectedProduct || checkoutProduct || products.length === 0) return;
     const requestedProductId = new URLSearchParams(window.location.search).get('product');
     if (!requestedProductId) return;
     const requestedProduct = products.find((product) => product.id === requestedProductId);
@@ -184,7 +188,7 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
         sessionStorage.removeItem(prodSessionKey);
         console.error('[PublicStore] Le clic du lien produit partagé n’a pas été enregistré; une prochaine ouverture pourra réessayer.', err);
       });
-  }, [products, selectedProduct, isMerchantPreview, vendeur.id]);
+  }, [products, selectedProduct, checkoutProduct, isMerchantPreview, vendeur.id]);
 
   const handleCloseProductModal = () => {
     setSelectedProduct(null);
@@ -672,7 +676,21 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
             </div>
 
             {/* Modal Bottom CTA */}
-            <div className="p-4 sm:p-5 bg-slate-50 border-t border-slate-100 rounded-b-3xl">
+            <div className="p-4 sm:p-5 bg-slate-50 border-t border-slate-100 rounded-b-3xl space-y-2">
+              {isVipStore && !isMerchantPreview && (
+                <button
+                  id="btn-structured-order-modal"
+                  onClick={() => {
+                    setCheckoutProduct(selectedProduct);
+                    setSelectedProduct(null);
+                    window.history.pushState({ modal: 'structured_order' }, '');
+                  }}
+                  className="w-full flex items-center justify-center gap-2 bg-slate-950 hover:bg-slate-800 active:scale-98 text-white font-bold py-3.5 px-4 rounded-xl shadow-md text-sm transition-all"
+                >
+                  <ShoppingBag className="w-5 h-5" />
+                  <span>Commander avec formulaire</span>
+                </button>
+              )}
               <button
                 id="btn-order-wa-modal"
                 onClick={() => handleOrderWhatsApp(selectedProduct)}
@@ -681,11 +699,26 @@ export const PublicStore: React.FC<PublicStoreProps> = ({
                 className="w-full flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#20ba59] active:scale-98 disabled:bg-slate-200 disabled:text-slate-500 disabled:cursor-not-allowed text-slate-950 font-bold py-3.5 px-4 rounded-xl shadow-md text-sm transition-all"
               >
                 <MessageCircle className="w-5 h-5 fill-current" />
-                <span>{hasPublicContact ? 'Demander ce produit' : 'Contact indisponible'}</span>
+                <span>{hasPublicContact ? (isVipStore && !isMerchantPreview ? 'Poser une question sur WhatsApp' : 'Demander ce produit') : 'Contact indisponible'}</span>
               </button>
             </div>
           </div>
         </div>
+      )}
+
+      {checkoutProduct && isVipStore && !isMerchantPreview && (
+        <StructuredOrderCheckout
+          key={checkoutProduct.id}
+          vendorId={vendeur.id}
+          vendorName={vendeur.name}
+          currency={vendeur.currency}
+          products={products}
+          initialProduct={checkoutProduct}
+          onClose={() => {
+            setCheckoutProduct(null);
+            if (window.history.state?.modal === 'structured_order') window.history.back();
+          }}
+        />
       )}
     </div>
   );

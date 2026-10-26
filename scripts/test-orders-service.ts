@@ -984,7 +984,7 @@ async function runAllTests() {
     assert.strictEqual(countAfterSecond, countAfterFirst, 'AUCUNE nouvelle commande créée lors du conflit 409');
   });
 
-  await runTest('4.7 Détection de conflit 409 sur chaque champ individuel (nom, WhatsApp, adresse, quantité, frais)', async () => {
+  await runTest('4.7 Détection de conflit 409 sur chaque champ individuel (nom, WhatsApp, adresse, quantité, frais, note)', async () => {
     const checkFieldConflict = async (fieldName: string, payloadModifier: (b: any) => any) => {
       const fieldKey = `conflict_field_key_${fieldName}_123`;
       const baseBody = {
@@ -1016,6 +1016,7 @@ async function runAllTests() {
     await checkFieldConflict('deliveryAddress', (b) => ({ ...b, deliveryAddress: 'Bd Ghandi Casablanca' }));
     await checkFieldConflict('quantity', (b) => ({ ...b, items: [{ productId: 'prod_shoes', quantity: 3 }] }));
     await checkFieldConflict('deliveryFee', (b) => ({ ...b, deliveryFee: 40 }));
+    await checkFieldConflict('notes', (b) => ({ ...b, notes: 'Livraison après 18 h' }));
   });
 
   await runTest('4.8 Réorganisation des articles ou des propriétés JSON sans changement sémantique : rejeu reconnu (HTTP 200)', async () => {
@@ -1303,15 +1304,13 @@ async function runAllTests() {
   // ---------------------------------------------------------------------------
   // GROUP 7: Firestore Rules Verification
   // ---------------------------------------------------------------------------
-  await runTest('7.1 Vérification de l’intégrité des règles firestore.rules pour /users/{uid}/orders/{orderId}', () => {
+  await runTest('7.1 Les commandes ne sont accessibles que par les API serveur authentifiées', () => {
     const rulesContent = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf-8');
-
     assert.ok(rulesContent.includes('match /orders/{orderId}'), 'Règle match /orders/{orderId} présente');
-    assert.ok(rulesContent.includes('allow create: if false;'), 'Création directe navigateur interdite (allow create: if false)');
-    assert.ok(rulesContent.includes('allow read: if isOwner(uid) || isAdmin();'), 'Lecture réservée au propriétaire ou admin');
-    assert.ok(rulesContent.includes('allow delete: if isAdmin();'), 'Suppression réservée à admin');
-    assert.ok(rulesContent.includes('affectedKeys().hasOnly([\'status\', \'updatedAt\'])'), 'Modification limitée à status et updatedAt');
-    assert.ok(rulesContent.includes('\'Nouveau\', \'Confirmée\', \'En préparation\', \'Expédiée\', \'Livrée\', \'Annulée\''), 'Validation des 6 statuts autorisés');
+    assert.ok(rulesContent.includes('allow read, write: if false;'), 'Accès direct Firebase aux commandes interdit');
+    const managementService = fs.readFileSync(path.resolve(process.cwd(), 'src/server/ordersManagementService.ts'), 'utf-8');
+    assert.ok(managementService.includes('verifyFirebaseUserDetails'), 'Les API vérifient l’identité Firebase');
+    assert.ok(managementService.includes("entitlements.reason !== 'vip_active'"), 'Les API imposent un abonnement VIP actif');
   });
 
   await runTest('7.2 Vérification de la fermeture hermétique de /users/{uid}/idempotency/{idempId} aux clients directs', () => {

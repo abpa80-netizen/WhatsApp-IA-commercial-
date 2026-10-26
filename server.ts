@@ -385,6 +385,19 @@ app.all('/api/orders/create', async (req: Request, res: Response) => {
   return handleCreateOrder(req, res);
 });
 
+// -------------------------------------------------------------------------
+ // 6. AUTHENTICATED VIP STRUCTURED ORDERS MANAGEMENT ENDPOINTS
+ // -------------------------------------------------------------------------
+app.all('/api/orders/list', async (req: Request, res: Response) => {
+  const { handleListOrders } = await import('./src/server/ordersManagementService.ts');
+  return handleListOrders(req, res);
+});
+
+app.all('/api/orders/update-status', async (req: Request, res: Response) => {
+  const { handleUpdateOrderStatus } = await import('./src/server/ordersManagementService.ts');
+  return handleUpdateOrderStatus(req, res);
+});
+
 // START SERVER WITH VITE (DEV) OR STATIC DIST (PROD)
 async function startServer() {
   const isProd = process.env.NODE_ENV === 'production';
