@@ -293,6 +293,16 @@ export const ApiService = {
     return await FirestoreService.getDailyAnalytics(vendeur, days);
   },
 
+  // Realtime subscription for verified store analytics.
+  subscribeDailyVisits(
+    vendeur: Vendeur,
+    days: number,
+    onUpdate: (stats: DailyVisitStat[]) => void,
+    onError: (error: unknown) => void
+  ): () => void {
+    return FirestoreService.subscribeDailyAnalytics(vendeur, days, onUpdate, onError);
+  },
+
   // 11. Admin: Get Admin Data from Firestore
   async getAdminData(): Promise<AdminData> {
     this.ensureAdminUser();
