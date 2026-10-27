@@ -30,9 +30,10 @@ dotenv.config();
  * Ordre de tentative par résilience croissante pour éviter les blocages de charge.
  */
 export const VERIFIED_TEXT_MODELS = [
-  'gemini-3.5-flash',
-  'gemini-flash-latest',
+  // Start with the lightweight Flash model for low-latency commercial chat.
   'gemini-3.1-flash-lite',
+  'gemini-flash-latest',
+  'gemini-3.5-flash',
   'gemini-3.8-flash',
 ];
 
@@ -159,6 +160,7 @@ export async function generateTextWithFallback(params: {
   contents: any;
   systemInstruction?: string;
   temperature?: number;
+  maxOutputTokens?: number;
   models?: string[];
   aiInstance?: GoogleGenAI | null;
 }): Promise<string> {
@@ -185,6 +187,7 @@ export async function generateTextWithFallback(params: {
         config: {
           systemInstruction: params.systemInstruction,
           temperature: params.temperature ?? 0.7,
+          ...(params.maxOutputTokens ? { maxOutputTokens: params.maxOutputTokens } : {}),
         },
       });
 
@@ -312,11 +315,12 @@ ${vendorInfo}`;
 
     const contents: any[] = [];
     if (Array.isArray(history)) {
-      for (const turn of history.slice(-10)) {
-        if (turn && turn.role && turn.text) {
+      // Keep recent context only; very long past turns add latency without helping every reply.
+      for (const turn of history.slice(-6)) {
+        if (turn && turn.role && typeof turn.text === 'string' && turn.text.trim()) {
           contents.push({
             role: turn.role === 'model' ? 'model' : 'user',
-            parts: [{ text: turn.text }],
+            parts: [{ text: turn.text.trim().slice(0, 1200) }],
           });
         }
       }
@@ -330,7 +334,8 @@ ${vendorInfo}`;
     const reply = await generateTextWithFallback({
       contents,
       systemInstruction: customInstruction || defaultSystemInstruction,
-      temperature: 0.7,
+      temperature: 0.6,
+      maxOutputTokens: 500,
       aiInstance: resolvedOptions.customAi,
     });
 

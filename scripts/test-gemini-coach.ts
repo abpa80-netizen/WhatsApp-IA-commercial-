@@ -91,7 +91,39 @@ async function runGeminiTests() {
   // Test 429 / Quota
   const quotaErr = sanitizeGeminiError({ status: 429, message: 'Resource exhausted (quota exceeded)' });
   assert(quotaErr.status === 429, 'Erreur 429 (quota dépassé) correctement détectée');
+
   assert(quotaErr.code === 'RATE_LIMIT', 'Code RATE_LIMIT associé');
+
+  // -------------------------------------------------------------------------
+  // 1b. TEST : CHEMIN RAPIDE DU COACH (MODÈLE, HISTORIQUE ET SORTIE LIMITÉS)
+  // -------------------------------------------------------------------------
+  console.log('\\n--- 1b. Optimisation de la latence du Coach ---');
+  let capturedRequest: any = null;
+  const mockAi: any = {
+    models: {
+      generateContent: async (request: any) => {
+        capturedRequest = request;
+        return { text: 'Réponse rapide du coach.' };
+      },
+    },
+  };
+  const latencyReq = {
+    method: 'POST',
+    body: {
+      message: 'Comment répondre à un client qui trouve mon produit trop cher ?',
+      history: Array.from({ length: 10 }, (_, index) => ({
+        role: index % 2 === 0 ? 'user' : 'model',
+        text: `Historique de conversation ${index}`,
+      })),
+    },
+  };
+  const latencyRes = createMockResponse();
+  await handleAIChat(latencyReq, latencyRes, { skipAuth: true, customAi: mockAi });
+  assert(VERIFIED_TEXT_MODELS[0] === 'gemini-3.1-flash-lite', 'Le modèle Flash léger est essayé en premier');
+  assert(capturedRequest?.model === VERIFIED_TEXT_MODELS[0], 'Le premier appel utilise le modèle rapide prioritaire');
+  assert(capturedRequest?.contents?.length === 7, 'Le Coach envoie au maximum 6 échanges récents plus le nouveau message');
+  assert(capturedRequest?.config?.maxOutputTokens === 500, 'La réponse du Coach est plafonnée à 500 tokens pour limiter le délai');
+  assert(latencyRes.statusCode === 200 && latencyRes.data?.reply === 'Réponse rapide du coach.', 'Le Coach répond normalement avec le chemin optimisé');
 
   // -------------------------------------------------------------------------
   // 2. TEST : GESTION DES REQUÊTES INVALIDES SUR LES HANDLERS
