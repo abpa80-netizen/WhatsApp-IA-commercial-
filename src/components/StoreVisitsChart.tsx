@@ -56,26 +56,24 @@ export const StoreVisitsChart: React.FC<StoreVisitsChartProps> = ({
   };
 
   useEffect(() => {
-    let cancelled = false;
-    const refresh = async (silent = false) => {
-      if (!silent) setLoading(true);
-      try {
-        const stats = await ApiService.getDailyVisits(vendeur, period);
-        if (!cancelled) {
-          setChartData(stats);
-          setLoadError(null);
-        }
-      } catch (err) {
-        if (!cancelled) setLoadError('Impossible de lire les statistiques depuis Firestore. Vérifiez la connexion et les règles de sécurité, puis réessayez.');
-        console.error('[StoreVisitsChart] Erreur lors du chargement des visites:', err);
-      } finally {
-        if (!cancelled && !silent) setLoading(false);
+    setLoading(true);
+    setLoadError(null);
+    const unsubscribe = ApiService.subscribeDailyVisits(
+      vendeur,
+      period,
+      (stats) => {
+        setChartData(stats);
+        setLoadError(null);
+        setLoading(false);
+      },
+      (err) => {
+        setLoadError('Impossible de lire les statistiques depuis Firestore. Vérifiez la connexion et les règles de sécurité, puis réessayez.');
+        setLoading(false);
+        console.error('[StoreVisitsChart] Erreur d’abonnement aux visites:', err);
       }
-    };
-    void refresh();
-    const timer = window.setInterval(() => { void refresh(true); }, 30000);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [vendeur.id, vendeur.uid, vendeur.views, period]);
+    );
+    return unsubscribe;
+  }, [vendeur.id, vendeur.uid, period]);
 
   // Aggregate stats for the selected period
   const totalPeriodViews = chartData.reduce((acc, d) => acc + (d.views || 0), 0);
