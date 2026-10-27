@@ -8,6 +8,7 @@ import {
   setDoc, 
   getDoc, 
   getDocs, 
+  onSnapshot,
   updateDoc, 
   deleteDoc,
   query,
@@ -857,6 +858,66 @@ export const FirestoreService = {
         conversions: dailyMap[key].conversions,
       };
     });
+  },
+
+  /** Subscribe to verified analytics events so the dashboard updates immediately. */
+  subscribeDailyAnalytics(
+    vendeur: Vendeur,
+    days: number,
+    onUpdate: (stats: DailyVisitStat[]) => void,
+    onError: (error: unknown) => void
+  ): () => void {
+    const cleanId = (vendeur.id || vendeur.uid || '').trim();
+    if (!cleanId) {
+      onUpdate([]);
+      return () => {};
+    }
+
+    const now = new Date();
+    const dateKeys: string[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(now.getTime() - i * 86400000);
+      const key = d.toISOString().slice(0, 10);
+      dateKeys.push(key);
+    }
+
+    const q = query(collection(db, 'analytics'), where('vendeur_id', '==', cleanId));
+    return onSnapshot(q, (snap) => {
+      const dailyMap = Object.fromEntries(
+        dateKeys.map((key) => [key, { views: 0, clicks: 0, conversions: 0 }])
+      ) as Record<string, { views: number; clicks: number; conversions: number }>;
+
+      snap.forEach((docSnap) => {
+        const ev = docSnap.data();
+        if (ev.source !== 'public_store_v1' || ev.verifiedTracking !== true) return;
+        const rawTimestamp = ev.timestamp;
+        const evDate = typeof rawTimestamp === 'string'
+          ? rawTimestamp.slice(0, 10)
+          : (rawTimestamp && typeof rawTimestamp.toDate === 'function'
+            ? rawTimestamp.toDate().toISOString().slice(0, 10)
+            : '');
+        if (!dailyMap[evDate]) return;
+        if (ev.type === 'view') dailyMap[evDate].views++;
+        else if (ev.type === 'product_click' || ev.type === 'click') dailyMap[evDate].clicks++;
+        else if (ev.type === 'conversion') dailyMap[evDate].conversions++;
+      });
+
+      const stats = dateKeys.map((key) => {
+        const parts = key.split('-');
+        const dObj = new Date(key + 'T12:00:00Z');
+        const dayName = dObj.toLocaleDateString('fr-FR', { weekday: 'short' });
+        const monthName = dObj.toLocaleDateString('fr-FR', { month: 'short' });
+        return {
+          fullDate: key,
+          date: `${dayName} ${parts[2]}`,
+          displayDate: `${parts[2]} ${monthName}`,
+          views: dailyMap[key].views,
+          clicks: dailyMap[key].clicks,
+          conversions: dailyMap[key].conversions,
+        };
+      });
+      onUpdate(stats);
+    }, onError);
   },
 
   // ----------------------------------------------------

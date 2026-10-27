@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle, LoaderCircle, RefreshCw, Search, ShoppingBag
 } from 'lucide-react';
@@ -47,6 +47,7 @@ export const OrdersDashboard: React.FC<OrdersDashboardProps> = ({ vendeur, onOpe
   const [filter, setFilter] = useState<'Toutes' | OrderStatus>('Toutes');
   const [search, setSearch] = useState('');
   const [loadError, setLoadError] = useState('');
+  const requestInFlightRef = useRef(false);
 
   const uid = auth.currentUser?.uid || '';
   const entitlements = getVendorEntitlements(vendeur);
@@ -60,6 +61,8 @@ export const OrdersDashboard: React.FC<OrdersDashboardProps> = ({ vendeur, onOpe
       setRefreshing(false);
       return;
     }
+    if (requestInFlightRef.current) return;
+    requestInFlightRef.current = true;
     if (quiet) setRefreshing(true);
     else setLoading(true);
     setLoadError('');
@@ -90,11 +93,27 @@ export const OrdersDashboard: React.FC<OrdersDashboardProps> = ({ vendeur, onOpe
     } finally {
       setLoading(false);
       setRefreshing(false);
+      requestInFlightRef.current = false;
     }
   }, [uid, vendeur.id, isOwnerSession]);
 
+  // Orders are served through the authenticated backend (client Firestore reads stay denied).
+  // Refresh every 10 seconds while visible and immediately when the tab regains focus.
   useEffect(() => {
     void loadOrders();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void loadOrders(true);
+    }, 10000);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void loadOrders(true);
+    };
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
   }, [loadOrders]);
 
   const updateStatus = async (order: StructuredOrder, status: OrderStatus) => {
